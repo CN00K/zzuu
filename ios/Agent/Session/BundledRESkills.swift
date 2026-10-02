@@ -13,6 +13,8 @@ import Foundation
 //   re-objc-api        — class-dump + dylib symbol triage
 //   re-anti-detect     — jailbreak/SSL-pinning/instrumentation bypass notes
 //   re-theos-tweak     — Theos Tweak.xm → .deb build on server → install
+//   re-keychain        — jailbreak keychain dump (tokens/credentials)
+//   re-flutter         — Flutter app detection + Dart source recovery
 final class BundledRESkills {
 
     static let version = "1.0.0"
@@ -33,11 +35,14 @@ description: iOS App 逆向第一步:IPA 解包、Mach-O 结构分析、字符�
 ## 0. 工具自举(首次使用执行一次)
 
 ```sh
-apk add --no-cache radare2 binwalk yara python3 py3-pip >/dev/null 2>&1 || true
+apk add --no-cache radare2 binwalk yara python3 py3-pip unzip >/dev/null 2>&1 || true
 which rabin2 || apk add --no-cache radare2
+pip3 install -q ipsw 2>/dev/null || true        # blacktop/ipsw,iOS 研究瑞士军刀(python)
+# optool(Mach-O 操作,otool 的开源替代,GitHub 1.3k★),按需编译:
+[ -x /usr/local/bin/optool ] || { rm -rf /tmp/optool && git clone --depth 1 https://github.com/alexzielenski/optool /tmp/optool && cd /tmp/optool && make -j4 >/dev/null 2>&1 && cp optool /usr/local/bin/; }
 ```
 
-radare2 提供 rabin2/rasm2/rafind2 等全套静态工具,Alpine 直接可装。
+radare2 提供 rabin2/rasm2/rafind2 等全套静态工具;ipsw 管固件/App Store 包/plist;optool 管 Mach-O 段与 load command(`optool info -seg <bin>`、`optool install` 注入 dylib)。
 
 ## 1. 获取二进制
 
@@ -483,5 +488,160 @@ root_execute: killall -9 <目标App进程名> 2>/dev/null   # 重启 App 生效
 - 每个 tweak 独立目录,版本号递增
 - control 的 Package 名唯一,避免和已有包冲突
 - 编译产物 .deb 留档在 workspace,方便重装/分发
+"""
+
+    // MARK: re-keychain
+
+    static let keychainDump = """
+---
+name: re-keychain
+version: \(BundledRESkills.version)
+description: 越狱真机 Keychain 提取:dump 应用存储的 token/凭证/证书。分析登录态、API token、OAuth 凭据时使用。需要 root_execute。
+---
+
+# Keychain 提取(越狱真机)
+
+iOS 应用的敏感数据(token、密码、证书)大头在 Keychain 里。越狱环境下可以完整 dump。
+这是拿到 API token 最直接的路径——比 hook 网络层省事得多。
+
+## 1. 定位目标 App 的 Keychain 条目
+
+```
+root_execute: security find-generic-password -D 2>/dev/null | head -30
+# 按服务名过滤(bundle id 或常见命名)
+root_execute: security find-generic-password -l "<关键词>" 2>&1 | head -20
+```
+GenP(generic password)条目的 service/account 字段通常含 bundle id。
+
+## 2. Dump
+
+两条路线:
+
+**A. keychaineditor(NitinJami,GitHub 206★,CLI,支持约束解码)**
+```
+root_execute: [ -x /var/jb/usr/bin/keychaineditor ] || { curl -fsSL https://raw.githubusercontent.com/NitinJami/keychaineditor/master/keychaineditor -o /var/jb/usr/bin/keychaineditor 2>/dev/null && chmod +x /var/jb/usr/bin/keychaineditor; } || echo "prebuilt missing — need source build"
+root_execute: /var/jb/usr/bin/keychaineditor dump > /var/mobile/kc_dump.txt 2>&1
+```
+注意:keychaineditor 只支持 GenP 类型;预编译二进制可能和当前 iOS 版本不匹配,
+失败时走路线 B。
+
+**B. 直接读 Keychain 数据库(root 权限下最可靠)**
+```
+root_execute: ls -la /var/Keychains/
+# mobile.keychain-db 是 SQLite
+root_execute: cp /var/Keychains/mobile.keychain-db /var/mobile/kc.db
+```
+搬回沙箱(回环 HTTP,见 re-ios-triage 第 5 节)后:
+```sh
+# 沙箱侧
+sqlite3 /var/minis/workspace/re/kc.db ".tables"
+sqlite3 /var/minis/workspace/re/kc.db "SELECT * FROM genp LIMIT 5;"
+# 明文值在 blob 里;新版 iOS 的值本身还有加密(用 Secure Enclave 派生密钥),
+# 所以优先用路线 A 的运行时读取,数据库直读作为线索发现手段
+```
+
+## 3. 运行时读取(最干净)
+
+hook SecItemCopyMatching,让 App 自己把解密后的值吐出来:
+```
+root_execute: cat > /tmp/kchook.js <<'JSEOF'
+Interceptor.attach(Module.findExportByName(null, "SecItemCopyMatching"), {
+  onLeave: function(ret) {
+    if (ret === 0) { console.log("KEYCHAIN_HIT"); }
+  }
+});
+JSEOF
+root_execute: /var/jb/usr/bin/frida -n <App> -l /tmp/kchook.js --no-pause 2>&1 | tee /tmp/kc.log
+```
+配合 class-dump 找 App 调用 SecItemCopyMatching 的位置,确定它取哪些 key。
+
+## 4. 产出
+
+- 目标 App 的所有 GenP 条目(service/account/value)
+- 识别出:API token、refresh token、设备指纹、会话 ID
+- 这些值可以直接用于沙箱内复现 API 请求(curl 带 token 打接口)
+
+## 纪律
+
+- dump 结果属于高敏数据,只留在本地 workspace,不进 memory
+- 用完的 token 如果用户要,提醒其有效期和风控风险
+"""
+
+    // MARK: re-flutter
+
+    static let flutterApp = """
+---
+name: re-flutter
+version: \(BundledRESkills.version)
+description: Flutter 应用检测与 Dart 代码恢复:识别 Flutter App、从 libapp.so 提取 Dart 符号和方法名、配合 kill_flutter 拆 SSL pinning。目标 App 是 Flutter 架构时使用。
+---
+
+# Flutter App 逆向
+
+大量新 App 用 Flutter 写。特征:Dart 业务逻辑编译成 AOT 快照放在 libapp.so 里,
+ObjC 层只剩壳——class-dump 出来的全是 Flutter 框架类,业务方法一个都看不见。
+先判断是不是 Flutter,再决定路线。
+
+## 1. 检测
+
+```sh
+# 沙箱侧,对解包后的 .app:
+ls ipa/Payload/<App>.app/Frameworks/ | grep -i flutter    # Flutter.framework
+file ipa/Payload/<App>.app/libapp.so 2>/dev/null          # 存在即高度可疑
+strings ipa/Payload/<App>.app/libapp.so | grep -c "Dart_"  # 大量 Dart_ 符号 = 实锤
+```
+
+## 2. Dart 符号提取(AOT 快照自带符号表)
+
+```sh
+# 方法名都在,只是没有实现体
+strings libapp.so | grep "^Dart_" | sed 's/^Dart_//' | sort -u > dart_syms.txt
+wc -l dart_syms.txt
+# 业务方法识别:排除框架前缀
+grep -vE "^(dart:_|ui:|_internal|_engine|flutter:)" dart_syms.txt | head -60
+# 字符串常量(Dart 字符串也在 so 里)
+strings libapp.so | grep -iE "http|api|token|sign" | head -40
+```
+
+## 3. 反编译到伪代码
+
+**沙箱侧**(Linux 友好):
+```sh
+pip3 install -q flutterdec 2>/dev/null || true
+# flutterdec(caverav,GitHub 104★)目前主战场是 Android libapp.so;
+# iOS 的 libapp.so 同为 ARM64 AOT 快照,多数情况可直接喂:
+flutterdec -i libapp.so -o dart_out/ 2>&1 | tail -5
+```
+不行时的降级:只用第 2 节的符号+字符串,照样能定位业务方法名去动态验证。
+
+## 4. 动态:kill_flutter(Flutter SSL pinning 专用,GitHub 312★)
+
+Flutter 的 pinning 通常在 Dart 层或插件层,通用 SecTrust hook 有时够不着:
+```
+root_execute: [ -d /var/mobile/kill_flutter ] || git clone --depth 1 https://github.com/f3rb123/kill_flutter /var/mobile/kill_flutter
+# 按其 README 生成对应版本的 frida 脚本,注入流程同 re-frida-dynamic
+```
+
+## 5. Hook Dart 方法
+
+Dart AOT 的方法地址可从符号表算出,frida 直接 attach:
+```
+root_execute: cat > /tmp/darthook.js <<'JSEOF'
+// 例:hook 某个业务方法(名字来自 dart_syms.txt)
+var m = Module.findBaseAddress(Process.getModuleByName("libapp.so"));
+// 实际做法:用 frida 的 Module.enumerateSymbols 找 Dart_<method> 偏移
+Process.enumerateModules()[0].enumerateSymbols().forEach(function(sym) {
+  if (sym.name.indexOf("<target_method>") !== -1) {
+    Interceptor.attach(sym.address, { onEnter(a) { console.log("HIT", hexdump(a)); } });
+  }
+});
+JSEOF
+```
+
+## 6. 产出
+
+- dart_syms.txt 业务方法清单(标注疑似签名/网络/加密的)
+- 若反编译成功:dart_out/ 伪代码目录
+- 下一步建议:hook 具体方法 or 直接走 Theos 短路(见 re-theos-tweak)
 """
 }
