@@ -16,6 +16,76 @@
 
 static NSString *const TOOL_NAME = @"apple-device";
 
+// [zzuu-apps] Private API for the installed-apps listing. Declared inline:
+// the private framework header (MobileCoreServices/LSApplicationWorkspace.h)
+// is not shipped with the public SDK, and we only need the two selector
+// entry points used below. Runtime failure on a stock (non-jailbroken)
+// device degrades to the objc_class_missing marker — callers handle it.
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
+- (NSArray *)allInstalledApplications;
+- (NSArray *)allApplications;
+@end
+
+static NSString *const kAppsClassMissing = @"__ls_workspace_class_missing__";
+
+// Enumerate every installed application on the device. Uses
+// LSApplicationWorkspace (private API, present on iOS 7-18; jailbroken and
+// TrollStore installs both have full access). Returns a JSON-ready array of
+// dicts, plus a count summary grouped by app vs system.
+static NSDictionary *get_installed_apps_data(void) {
+    Class wsClass = objc_getClass("LSApplicationWorkspace");
+    if (!wsClass) {
+        return @{@"error": kAppsClassMissing,
+                 @"hint": @"LSApplicationWorkspace unavailable on this device"};
+    }
+
+    // allInstalledApplications is the richer listing (bundle ids +
+    // container URLs); fall back to allApplications when absent.
+    __block NSArray *collected = nil;
+    NSArray *apps = nil;
+    noff_dispatch_main_sync(^id{
+        LSApplicationWorkspace *ws = [wsClass defaultWorkspace];
+        NSArray *result = [ws allInstalledApplications];
+        if (!result || result.count == 0) result = [ws allApplications];
+        collected = result ?: @[];
+        return nil;
+    });
+    apps = collected;
+
+    NSMutableArray *items = [NSMutableArray arrayWithCapacity:apps.count];
+    int userApps = 0;
+    int sysApps = 0;
+    for (id app in apps) {
+        NSString *bid = nil;
+        NSString *name = nil;
+        NSString *type = nil;
+        @try {
+            bid = [app valueForKey:@"applicationIdentifier"]
+               ?: [app valueForKey:@"bundleIdentifier"] ?: @"";
+            name = [app valueForKey:@"applicationDisplayName"]
+                ?: [app valueForKey:@"displayName"]
+                ?: [app valueForKey:@"localizedName"] ?: @"";
+            type = [app valueForKey:@"applicationType"] ?: @"";
+        } @catch (NSException *e) {
+            continue;
+        }
+        BOOL isSystem = [type.lowercaseString containsString:@"system"];
+        if (isSystem) sysApps++; else userApps++;
+        [items addObject:@{
+            @"bundle_id": bid ?: @"",
+            @"name": name ?: @"",
+            @"type": type ?: (isSystem ? @"System" : @"User"),
+        }];
+    }
+    return @{
+        @"total": @(items.count),
+        @"user_apps": @(userApps),
+        @"system_apps": @(sysApps),
+        @"apps": items,
+    };
+}
+
 static NSString *const HELP_TEXT =
     @"apple-device - Query device information\n"
      "\n"
@@ -27,6 +97,8 @@ static NSString *const HELP_TEXT =
      "             (default when no command given)\n"
      "  battery    Battery level and charging state\n"
      "  storage    Disk space information\n"
+     "  apps       List ALL installed applications (bundle id, name, type)\n"
+     "             optional: apps <keyword> filters by name/bundle id\n"
      "\n"
      "OPTIONS:\n"
      "  --help, -h      Show this help message\n"
@@ -36,7 +108,9 @@ static NSString *const HELP_TEXT =
      "EXAMPLES:\n"
      "  apple-device                   (same as: apple-device info)\n"
      "  apple-device battery\n"
-     "  apple-device storage --compact\n";
+     "  apple-device storage --compact\n"
+     "  apple-device apps              (all installed apps)\n"
+     "  apple-device apps telegram     (filter by keyword)\n";
 
 static NSString *thermal_state_string(NSProcessInfoThermalState state) {
     switch (state) {
@@ -251,12 +325,36 @@ static int device_handler(int argc, char **argv,
         return cmd_battery(stdout_fd, compact, quiet);
     } else if ([subcmd isEqualToString:@"storage"]) {
         return cmd_storage(stdout_fd, compact, quiet);
+    } else if ([subcmd isEqualToString:@"apps"]) {
+        NSDictionary *data = get_installed_apps_data();
+        // Optional keyword filter: second positional arg after "apps".
+        NSString *keyword = nil;
+        for (int i = 1; i < argc; i++) {
+            NSString *a = [NSString stringWithCString:argv[i] encoding:NSUTF8StringEncoding];
+            if (a && ![a hasPrefix:@"-"] && ![a isEqualToString:@"apps"]) { keyword = a; break; }
+        }
+        if (keyword.length) {
+            NSMutableArray *filtered = [NSMutableArray array];
+            for (NSDictionary *app in data[@"apps"]) {
+                NSString *bid = app[@"bundle_id"] ?: @"";
+                NSString *nm = app[@"name"] ?: @"";
+                if ([bid rangeOfString:keyword options:NSCaseInsensitiveSearch].length ||
+                    [nm rangeOfString:keyword options:NSCaseInsensitiveSearch].length) {
+                    [filtered addObject:app];
+                }
+            }
+            data = @{ @"total": @(filtered.count),
+                      @"keyword": keyword,
+                      @"apps": filtered };
+        }
+        noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, @"apps", data), compact, quiet);
+        return NOFF_EXIT_SUCCESS;
     }
 
     noff_emit_help(stderr_fd, HELP_TEXT);
     NSDictionary *err = noff_json_error(TOOL_NAME, subcmd,
                                          NOFF_ERR_INVALID_ARGS,
-                                         [NSString stringWithFormat:@"Unknown command '%@'. Valid commands: info, battery, storage. Use --help for details.", subcmd]);
+                                         [NSString stringWithFormat:@"Unknown command '%@'. Valid commands: info, battery, storage, apps. Use --help for details.", subcmd]);
     noff_emit_json(stdout_fd, err, compact, quiet);
     return NOFF_EXIT_INVALID_ARGS;
 }
