@@ -401,6 +401,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             BundledRESkills.flutterApp,
             BundledRESkills.netCapture,
             BundledRESkills.signExtract,
+            BundledRESkills.appClean,
         ] {
             let parsed = Self.parse(skillMD: content)
             let id = Self.slugify(parsed.name)

@@ -17,8 +17,7 @@ import Foundation
 //   re-flutter         — Flutter app detection + Dart source recovery
 //   re-netcap          — network capture: mitmproxy + frida httpdump + proxy config
 //   re-sign-extract    — signature/encryption algorithm extraction & reproduction
-//   re-netcap          — network capture: mitmproxy + frida httpdump + proxy config
-//   re-sign-extract    — signature/encryption algorithm extraction & reproduction
+//   re-appclean        — device-wide app cache analysis & safe cleanup
 final class BundledRESkills {
 
     static let version = "1.0.0"
@@ -866,5 +865,135 @@ python3 -c "import sys; sys.path.insert(0,'/var/minis/workspace/re'); from <app>
 - 每组采集数据存盘:/var/minis/workspace/re/<app>/sign_pairs.jsonl
 - 验证脚本迭代历史保留,失败假设也记下来(避免重复试)
 - 复现成功后:接口文档 + 可用 client 脚本一并交付
+"""
+
+    // MARK: re-appclean
+
+    static let appClean = """
+---
+name: re-appclean
+version: \(BundledRESkills.version)
+description: 全机 App 缓存分析与安全清理:扫描所有 App 数据容器、统计缓存占用、删除缓存垃圾并按释放空间排名。用户说"清理缓存/释放空间/分析 App 占用"时触发。需要 root_execute。
+---
+
+# 全机 App 缓存分析与清理
+
+目标:扫描全部 App 数据容器 → 统计可安全删除的缓存 → 确认后清理 → 按释放空间排名报告。
+**只碰缓存类目录,永不动 Documents / Library/Preferences / 应用数据。**
+
+## 0. 流程纪律
+
+三阶段,绝不跳步:
+1. **分析**(只读):扫描 + 统计,产出排名表
+2. **确认**:把 Top 列表给用户看,拿到明确同意才动手
+3. **清理**(写入):逐类删除,记录每步释放量,失败跳过
+4. **报告**:总量 + Top 10 + 失败清单
+
+## 1. 分析脚本(只读,先跑这个)
+
+把脚本写到真机 /tmp/scan_cache.sh(root_execute):
+```
+root_execute: cat > /tmp/scan_cache.sh <<'SHEOF'
+#!/bin/sh
+# 全机 App 缓存扫描 — 只读
+BASE=/var/mobile/Containers/Data/Application
+echo "app|caches_kb|tmp_kb|webkit_kb|snapshots_kb|total_kb"
+for d in $BASE/*/; do
+  bid=$(defaults read "$d.com.apple.mobile_container_manager.metadata.plist" MCMMetadataIdentifier 2>/dev/null)
+  [ -z "$bid" ] && continue
+  c=0; t=0; w=0; s=0
+  [ -d "$d/Library/Caches" ] && c=$(du -sk "$d/Library/Caches" 2>/dev/null | cut -f1)
+  [ -d "$d/tmp" ] && t=$(du -sk "$d/tmp" 2>/dev/null | cut -f1)
+  [ -d "$d/Library/WebKit" ] && w=$(du -sk "$d/Library/WebKit" 2>/dev/null | cut -f1)
+  [ -d "$d/Library/SplashBoard" ] && s=$(du -sk "$d/Library/SplashBoard" 2>/dev/null | cut -f1)
+  total=$((c + t + w + s))
+  [ $total -gt 1024 ] && echo "$bid|$c|$t|$w|$s|$total"
+done | sort -t"|" -k6 -rn
+SHEOF
+root_execute: chmod +x /tmp/scan_cache.sh && /tmp/scan_cache.sh
+```
+输出是按缓存总量降序的表(KB)。bundle id → App 名称对照用 `apple-device apps` 的输出。
+
+## 2. 统计汇总
+
+```
+root_execute: /tmp/scan_cache.sh | awk -F '"' '{s+=$6; n++} END {print n" apps, "s/1024/1024" GB purgeable"}'
+```
+把结果整理成表格给用户:App 名 | 缓存 | WebKit | 快照 | 合计,加 Top 10。
+
+## 3. 清理脚本(确认后执行)
+
+安全边界——**只删这些**:
+- `Library/Caches/`(内容,保留目录本身)
+- `tmp/`(内容)
+- `Library/WebKit/NetworkCache/`
+- `Library/SplashBoard/Snapshots/`(启动画面快照,可再生)
+- `Library/cookies/Cookies.binarycookies` **不删**(登录态)
+- `Library/Preferences/`、`Documents/`、`Library/Application Support/` **绝不碰**
+
+```
+root_execute: cat > /tmp/clean_cache.sh <<'SHEOF'
+#!/bin/sh
+# 全机 App 缓存清理 — 只删缓存类
+BASE=/var/mobile/Containers/Data/Application
+freed=0; files=0; dirs=0; failed=0
+for d in $BASE/*/; do
+  bid=$(defaults read "$d.com.apple.mobile_container_manager.metadata.plist" MCMMetadataIdentifier 2>/dev/null)
+  [ -z "$bid" ] && continue
+  for target in "Library/Caches" "tmp" "Library/WebKit/NetworkCache" "Library/SplashBoard/Snapshots"; do
+    p="$d$target"
+    [ -d "$p" ] || continue
+    before=$(du -sk "$p" 2>/dev/null | cut -f1)
+    find "$p" -mindepth 1 -delete 2>/dev/null
+    rc=$?
+    if [ $rc -eq 0 ]; then
+      freed=$((freed + before)); dirs=$((dirs+1))
+      cnt=$(find "$p" -type f 2>/dev/null | wc -l); files=$((files + cnt))
+    else
+      failed=$((failed+1)); echo "FAIL|$bid|$target"
+    fi
+  done
+done
+echo "SUMMARY|apps_dirs=$dirs|freed_kb=$freed|failed=$failed"
+SHEOF
+root_execute: chmod +x /tmp/clean_cache.sh && /tmp/clean_cache.sh 2>&1 | tail -30
+```
+逐 app 清理并排名(释放空间 Top 10)的版本:在循环里按 bid 累计 freed,输出
+`bid|freed_kb` 再 sort -t"|" -k2 -rn | head -10。
+
+## 4. 报告格式
+
+给用户的报告(参考):
+```
+| 指标 | 数值 |
+|---|---|
+| 处理应用数 | 170 |
+| 失败 | 16(无数据容器,如 Filza、TrollFools 等)|
+| 删除文件 | 31,796 |
+| 删除目录 | 6,878 |
+| 释放空间 | ~4.25 GB |
+
+### 🏆 释放空间最多的应用 Top 10
+| 应用 | 释放 |
+|---|---|
+| 🥇 番茄畅听 | 663 MB |
+| 🥈 小红书 | 650 MB |
+...
+```
+失败的应用通常是 TrollStore 装的无容器 App 或系统保护目录,列入失败清单即可,不是错误。
+
+## 5. 追加项(可选,单独确认)
+
+- **键盘缓存**:`/var/mobile/Library/Keyboard/*.db`(动态词典,泄露风险)— 单独确认后删
+- **Safari 缓存**:`/var/mobile/Library/Safari/CacheSyncedValidator*`
+- **系统日志**:`/var/mobile/Library/Logs/`(通常几十 MB)
+- **崩溃日志**:`/var/mobile/Library/Logs/CrashReporter/`(分析前可先归档)
+
+## 纪律
+
+- 分析阶段一次 root_execute 全量扫描(只读,无风险);清理必须等用户确认
+- 清理脚本只删 find -mindepth 1 -delete(保留目录本身,权限不破)
+- App 正在运行时其缓存可能删不干净 → 先让用户划掉后台 App 再清
+- 报告必须包含失败清单(哪些 App 跳过了、为什么)
 """
 }
