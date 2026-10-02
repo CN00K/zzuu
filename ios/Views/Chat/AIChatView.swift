@@ -400,6 +400,10 @@ struct AIChatView: View {
     @State private var providerImportResult: String?
     @State private var screenshotPreview: ChatScreenshotPreview?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    // [zzuu-apps] Attach-App picker state.
+    @State private var showAppPicker = false
+    @State private var appPickerApps: [(bid: String, name: String)] = []
+    @State private var appPickerLoading = false
     @State private var attachmentGridHeight: CGFloat = 0
     @State private var transcriptHeight: CGFloat = 0
     /// Tracks how much of recognizedText has already been appended to inputText.
@@ -1269,6 +1273,20 @@ struct AIChatView: View {
                 }
             case .failure(let error):
                 minisLogger.error("File import failed: \(error.localizedDescription)")
+            }
+        }
+        // [zzuu-apps] Attach-App sheet: enumerate installed apps (via the
+        // root_execute channel when linked; graceful hint otherwise), let the
+        // user pick one, then register it as a document attachment with
+        // structured intel the agent reads as context.
+        .sheet(isPresented: $showAppPicker) {
+            NavigationView {
+                AppPickerView(
+                    apps: $appPickerApps,
+                    loading: $appPickerLoading
+                ) { bid, name in
+                    vm.addAppAttachment(bundleId: bid, displayName: name)
+                }
             }
         }
         // [T-minisurl-wrong-active-session] A draft opened from the UI has
@@ -3299,6 +3317,8 @@ struct AIChatView: View {
                 Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
                 Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
                 Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+                // [zzuu-apps] Attach an installed app as context (JB target).
+                Button { showAppPicker = true } label: { Label("Attach App", systemImage: "apps.iphone") }
             } label: {
                 icon
             }
@@ -3310,6 +3330,7 @@ struct AIChatView: View {
                 Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
                 Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
                 Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+                Button { showAppPicker = true } label: { Label("Attach App", systemImage: "apps.iphone") }
             }
         }
     }

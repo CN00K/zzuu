@@ -517,6 +517,53 @@ extension AIChatViewModel {
     }
 
     /// Save a file picked via document picker to Caches and add as attachment.
+    // [zzuu-apps] "Add App" attachment: writes a structured intel file (bundle
+    // id, container path, cache stats) into the attachment cache and registers
+    // it as a .document chip. Reuses the entire attachment pipeline — the file
+    // flows into the prompt as an ordinary document, and the agent reads it
+    // (or uses the bundle id directly with apps_open / container_* tools).
+    func addAppAttachment(bundleId: String, displayName: String) {
+        let fm = FileManager.default
+        let dir = attachmentCacheDir
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let safeName = "\(UUID().uuidString.prefix(8))_app_\(bundleId.replacingOccurrences(of: "/", with: "_")).txt"
+        let destURL = dir.appendingPathComponent(safeName)
+
+        let intel = """
+        # Attached App Context
+        bundle_id: \(bundleId)
+        name: \(displayName)
+
+        The user attached this installed app to the conversation. Treat it as
+        the analysis target for this session.
+
+        Available actions (Jailbreak SSH tools, when linked):
+        - apps_open bundle_id: launch/foreground this app
+        - container_read bundle_id + relative_path: read files in its data container
+        - container_write_text: write into its container (privileged — confirm first)
+        - apple-device apps: full installed-app listing
+        - re-* skills: triage / frida / class-dump workflows apply to this target
+
+        Container path (resolved lazily):
+        /var/mobile/Containers/Data/Application/<uuid> (uuid resolved from bundle_id
+        via .com.apple.mobile_container_manager.metadata.plist grep)
+        """
+        do {
+            try intel.write(to: destURL, atomically: true, encoding: .utf8)
+        } catch {
+            logger.error("📎[APP-ATTACH] failed to write intel file: \(error.localizedDescription)")
+            return
+        }
+
+        attachments.append(InputAttachment(
+            fileName: "\(displayName) (\(bundleId))",
+            cacheURL: destURL,
+            kind: .document
+        ))
+        logger.info("📎[APP-ATTACH] attached \(bundleId) → \(safeName)")
+    }
+
     func addFileAttachment(from sourceURL: URL, originalDate: Date? = nil) {
         let fm = FileManager.default
         let dir = attachmentCacheDir

@@ -361,6 +361,7 @@
 		ZZJB00001 /* JailbreakConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZZJB00011 /* JailbreakConfigStore.swift */; };
 		ZZJB00002 /* AIChatViewModel+JBRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZZJB00012 /* AIChatViewModel+JBRoot.swift */; };
 		ZZJB00003 /* JailbreakSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZZJB00013 /* JailbreakSettingsView.swift */; };
+		ZZAP00001 /* AppPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZZAP00011 /* AppPickerView.swift */; };
 		E5P000003 /* DeepLinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5P000013 /* DeepLinkCoordinator.swift */; };
 		E5P000004 /* DeepLinkRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5P000014 /* DeepLinkRouter.swift */; };
 		E5PPB0001 /* PerfProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5PPB0011 /* PerfProbe.swift */; };
@@ -1088,6 +1089,7 @@
 		ZZJB00011 /* JailbreakConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakConfigStore.swift; sourceTree = "<group>"; };
 		ZZJB00012 /* AIChatViewModel+JBRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+JBRoot.swift"; sourceTree = "<group>"; };
 		ZZJB00013 /* JailbreakSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakSettingsView.swift; sourceTree = "<group>"; };
+		ZZAP00011 /* AppPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPickerView.swift; sourceTree = "<group>"; };
 		E5P000013 /* DeepLinkCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkCoordinator.swift; sourceTree = "<group>"; };
 		E5P000014 /* DeepLinkRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkRouter.swift; sourceTree = "<group>"; };
 		E5PPB0011 /* PerfProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfProbe.swift; sourceTree = "<group>"; };
@@ -2354,6 +2356,7 @@
 				E5SCH0014 /* HelperSettingsView.swift */,
 				E5TLS0011 /* ToolsSettingsView.swift */,
 				ZZJB00013 /* JailbreakSettingsView.swift */,
+				ZZAP00011 /* AppPickerView.swift */,
 				E5LOCK102 /* FaceIDProtectionSettingsView.swift */,
 				E5LOCK103 /* AppLockOverlay.swift */,
 			);
@@ -3147,6 +3150,7 @@
 				ZZJB00001 /* JailbreakConfigStore.swift in Sources */,
 				ZZJB00002 /* AIChatViewModel+JBRoot.swift in Sources */,
 				ZZJB00003 /* JailbreakSettingsView.swift in Sources */,
+				ZZAP00001 /* AppPickerView.swift in Sources */,
 				E5P000003 /* DeepLinkCoordinator.swift in Sources */,
 				E5P000004 /* DeepLinkRouter.swift in Sources */,
 				E5CFG0001 /* ConfigAuditEntry.swift in Sources */,
