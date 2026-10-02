@@ -28,9 +28,15 @@ jobs:
       - name: Install Homebrew deps
         run: |
           brew install ninja llvm libarchive pkg-config || true
-          # lld must be on PATH for iSH's -fuse-ld=lld (Homebrew llvm is keg-only)
-          echo "PATH=$(brew --prefix llvm)/bin:$PATH" >> "$GITHUB_ENV"
-          ls "$(brew --prefix llvm)/bin" | grep -i "ld" | head -5
+          # lld must be resolvable by name for iSH's -fuse-ld=lld (VDSO link
+          # command). Homebrew llvm is keg-only — symlink lld into
+          # /usr/local/bin so every subprocess (incl. ninja internals) finds it.
+          LLDBIN="$(brew --prefix llvm)/bin"
+          sudo ln -sf "$LLDBIN/lld" /usr/local/bin/lld
+          sudo ln -sf "$LLDBIN/ld.lld" /usr/local/bin/ld.lld
+          sudo ln -sf "$LLDBIN/ld64.lld" /usr/local/bin/ld64.lld
+          which lld && lld --version | head -1
+          echo "PATH=$LLDBIN:$PATH" >> "$GITHUB_ENV"
 
       - name: Install Meson
         run: |
