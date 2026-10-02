@@ -2,8 +2,87 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- ═══ zzuu entitlement pack [zzuu-ent] ═══
+	     Full high-value entitlement set for TrollStore install (CoreTrust
+	     accepts all of these; they persist across reboots). Original Minis
+	     entitlements retained at the bottom. -->
+
+	<!-- Core capability -->
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.system-task-ports</key>
+	<true/>
+	<key>task_for_pid-allow</key>
+	<true/>
+	<key>com.apple.security.exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/</string>
+	</array>
+
+	<!-- Memory / debugging -->
+	<key>com.apple.private.coresymbolicationd</key>
+	<true/>
+	<key>com.apple.private.logging.admin</key>
+	<true/>
+	<key>com.apple.private.memorystatus</key>
+	<true/>
+	<key>com.apple.private.cs.debugger</key>
+	<true/>
+	<key>com.apple.private.process-info-view</key>
+	<true/>
+
+	<!-- IOKit user clients -->
+	<key>com.apple.security.exception.iokit-user-client-class</key>
+	<array>
+		<string>IOHIDEventServiceUserClient</string>
+		<string>IOAcceleratorESUserClient</string>
+		<string>AppleJPEGDriverUserClient</string>
+	</array>
+
+	<!-- Network extension -->
+	<key>com.apple.private.networkextension</key>
+	<true/>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+		<string>app-proxy-provider</string>
+	</array>
+
+	<!-- UI / sensing (effective only while jailbroken) -->
+	<key>com.apple.private.accessibility.allow</key>
+	<true/>
+	<key>com.apple.private.accessibility.inspection</key>
+	<true/>
+	<key>com.apple.springboard.opensensitiveurl</key>
+	<true/>
+
+	<!-- Data layer -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>*</string>
+	</array>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServiceCamera</string>
+		<string>kTCCServiceMicrophone</string>
+		<string>kTCCServiceContacts</string>
+		<string>kTCCServicePhotos</string>
+		<string>kTCCServiceLocation</string>
+	</array>
+	<key>com.apple.private.tcc.manager</key>
+	<true/>
+
+	<!-- Services / communication -->
+	<key>com.apple.private.coreservices.canmaplsdatabase</key>
+	<true/>
+	<key>com.apple.private.MobileInstallation</key>
+	<true/>
+	<key>com.apple.private.mobileinstaller.xpc</key>
+	<true/>
+
+	<!-- ═══ Original Minis entitlements (retained) ═══ -->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>production</string>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
 	<key>com.apple.developer.healthkit.access</key>

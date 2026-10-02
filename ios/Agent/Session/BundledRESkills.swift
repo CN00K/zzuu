@@ -18,6 +18,7 @@ import Foundation
 //   re-netcap          — network capture: mitmproxy + frida httpdump + proxy config
 //   re-sign-extract    — signature/encryption algorithm extraction & reproduction
 //   re-appclean        — device-wide app cache analysis & safe cleanup
+//   re-entitlement     — TrollStore entitlement pack + post-reboot capability matrix
 final class BundledRESkills {
 
     static let version = "1.0.0"
@@ -995,5 +996,118 @@ root_execute: chmod +x /tmp/clean_cache.sh && /tmp/clean_cache.sh 2>&1 | tail -3
 - 清理脚本只删 find -mindepth 1 -delete(保留目录本身,权限不破)
 - App 正在运行时其缓存可能删不干净 → 先让用户划掉后台 App 再清
 - 报告必须包含失败清单(哪些 App 跳过了、为什么)
+"""
+
+    // MARK: re-entitlement
+
+    static let entitlementPack = """
+---
+name: re-entitlement
+version: \(BundledRESkills.version)
+description: TrollStore 权限最大化策略:entitlement 全家桶说明、系统文件落地修改(TCC/Keychain/LaunchDaemon)、重启前后能力矩阵。用户问"还能提权/嵌入权限/重启后什么能用"时触发。
+---
+
+# TrollStore 权限最大化(zzuu 已内置全家桶)
+
+zzuu 的 entitlements 已内置完整高价值集(CoreTrust bug 让系统接受,重启后持久)。
+这份技能是使用手册:哪些能用、哪些是文件落地的临时修改、重启后什么会丢。
+
+## 0. zzuu 已嵌入的 entitlement(重启后持久有效)
+
+| 层 | Entitlement | 能力 |
+|---|---|---|
+| 核心 | no-sandbox + files.absolute-path.rw:[/] | 全盘读写 |
+| 核心 | task_for_pid-allow + system-task-ports | 进程内存读写 |
+| 调试 | coresymbolicationd / cs.debugger | 堆栈符号化、附加调试器 |
+| 调试 | logging.admin | 系统日志流 |
+| 调试 | memorystatus | jetsam 控制 |
+| IOKit | IOHIDEventService / IOAccelerator / JPEGDriver | 触摸注入、GPU、硬编解码 |
+| 网络 | networkextension + packet-tunnel-provider | VPN/代理创建 |
+| UI | accessibility.allow / inspection | AX API(仅越狱窗口) |
+| 数据 | keychain-access-groups:[*] | 跨应用 Keychain |
+| 数据 | tcc.allow(全项)+ tcc.manager | TCC 权限改写 |
+| 服务 | canmaplsdatabase / MobileInstallation | LS DB、应用安装卸载 |
+| 通信 | aps-environment:production | 推送 |
+
+## 1. 验证当前权限是否生效
+
+```
+root_execute: csops $(launchctl procinfo $(pgrep -f zzuu | head -1) 2>/dev/null | head -1) 2>/dev/null || echo "use codesign:"
+root_execute: codesign -d --entitlements :- /var/containers/Bundle/Application/*/zzuu.app 2>/dev/null | head -40
+```
+或直接验证能力:
+```
+root_execute: cat /var/mobile/Library/Safari/History.db >/dev/null 2>&1 && echo "FULL_DISK_OK"
+root_execute: security find-generic-password -s test 2>&1 | grep -c "could not" # keychain reachability
+```
+
+## 2. 系统文件落地修改(越狱窗口内完成)
+
+这些写入磁盘、物理存在,但 daemon 是否认要看运行时验证:
+
+### TCC 全量授权(相机/麦克风/相册/通讯录/位置)
+```
+root_execute: sqlite3 /private/var/mobile/Library/TCC/TCC.db \
+  "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version) VALUES
+   ('kTCCServiceCamera','com.zzuu.zero',0,2,2,1),
+   ('kTCCServiceMicrophone','com.zzuu.zero',0,2,2,1),
+   ('kTCCServicePhotos','com.zzuu.zero',0,2,2,1);"
+# 重启后 tccd 可能重验签名;entitlement 里 tcc.manager 已覆盖,一般够用
+```
+
+### 跨应用 Keychain 条目
+```
+root_execute: security add-generic-password -s zzuu_test -a root -w "value" 2>&1
+# keychain-access-groups:* 已嵌入,ACL 一般放行
+```
+
+### 开机自启(LaunchDaemon — TrollStore 持久后门的核心)
+```
+root_execute: cat > /Library/LaunchDaemons/com.zzuu.zero.daemon.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist ...><plist version="1.0"><dict>
+  <key>Label</key><string>com.zzuu.zero.daemon</string>
+  <key>ProgramArguments</key><array>
+    <string>/var/containers/Bundle/Application/*/zzuu.app/zzuu</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict></plist>
+EOF
+root_execute: chown root:wheel /Library/LaunchDaemons/com.zzuu.zero.daemon.plist && launchctl load /Library/LaunchDaemons/com.zzuu.zero.daemon.plist
+```
+注意:TrollStore App 不是独立二进制,LaunchDaemon 方案实际用
+**TrollStore 的 keepalive 或 Shortcuts 自动化**替代(见 minis 说明)。
+
+### 位置欺骗前置缓存
+```
+root_execute: ls /var/mobile/Library/Caches/locationd/
+# 写入合法格式的缓存可欺骗部分请求;完整欺骗需要 hook locationd(见 re-anti-detect)
+```
+
+## 3. 重启前后能力矩阵
+
+| 能力 | 越狱窗口 | 重启后(zzuu) |
+|---|---|---|
+| 读任意文件 | ✅ | ✅ entitlement |
+| 写任意文件(/var) | ✅ | ✅ entitlement |
+| 进程内存读/写 | ✅ | ✅ task_for_pid |
+| 注入 dylib | ✅ | ✅ TrollFools / cs.debugger |
+| 触摸事件注入 | ✅ | 🟡 IOKit 类可能仍验签名 |
+| UI 树读取自动化 | ✅ | ❌ accessibilityd 重验 |
+| 系统日志实时流 | ✅ | ✅ logging.admin |
+| 网络拦截(VPN) | ✅ | ✅ networkextension |
+| Keychain 跨应用 | ✅ | 🟡 部分 ACL 验证 |
+| TCC 改写 | ✅ | 🟡 tccd 可能重验 |
+| 应用安装/卸载 | ✅ | 🟡 MobileInstallation |
+| 位置欺骗 | ✅ | 🟡 locationd 验证 |
+| 推送通知 | ✅ | ✅ |
+
+## 4. 使用纪律
+
+- 重启后先跑第 1 节的验证,列一份"当前可用能力"清单再规划任务
+- 🟡 项逐个试,不要假设全部有效;失败项记入 memory
+- UI 自动化(accessibility)失效后,触摸模拟走 IOKit 路线(🟡)或 XXTouch 类 tweak
+- 系统分区(/System)写入永远别试——iOS 18 上 100% 失败且可能损坏
 """
 }

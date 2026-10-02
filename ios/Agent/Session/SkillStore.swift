@@ -402,6 +402,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             BundledRESkills.netCapture,
             BundledRESkills.signExtract,
             BundledRESkills.appClean,
+            BundledRESkills.entitlementPack,
         ] {
             let parsed = Self.parse(skillMD: content)
             let id = Self.slugify(parsed.name)
