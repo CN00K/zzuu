@@ -106,7 +106,7 @@ enum JailbreakRunner {
                     if let result {
                         finish(Result(
                             output: ((result.output ?? "") + (result.errorOutput ?? "")),
-                            exitCode: result.exitCode))
+                            exitCode: Int(result.exitCode)))
                     } else {
                         finish(nil)
                     }

@@ -1,5 +1,7 @@
 import Foundation
 
+private let logger = AppLogger(category: "AIChatVM+JBRoot")
+
 // MARK: - Root command execution on the jailbroken host
 //
 // [zzuu-jb] The `root_execute` tool path. Runs commands on the iOS host over

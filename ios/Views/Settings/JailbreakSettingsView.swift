@@ -126,7 +126,8 @@ enum JBLinker {
     }
 
     static func ensureKey() async throws -> String {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
+        let dir = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                              ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!).appendingPathComponent(".ssh")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let priv = dir.appendingPathComponent("id_ed25519_jb")
         if FileManager.default.fileExists(atPath: priv.path) {
