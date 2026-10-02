@@ -30,13 +30,28 @@ struct AppPickerView: View {
                 if loading {
                     ProgressView("Loading apps...")
                 } else if let errorMsg {
-                    ContentUnavailableView {
-                        Label("Not available", systemImage: "lock.shield")
-                    } description: {
-                        Text(errorMsg)
+                    if #available(iOS 17.0, *) {
+                        ContentUnavailableView {
+                            Label("Not available", systemImage: "lock.shield")
+                        } description: {
+                            Text(errorMsg)
+                        }
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "lock.shield").font(.largeTitle)
+                            Text("Not available").font(.headline)
+                            Text(errorMsg).font(.footnote).multilineTextAlignment(.center)
+                        }.padding()
                     }
                 } else if filtered.isEmpty {
-                    ContentUnavailableView.search(text: filter)
+                    if #available(iOS 17.0, *) {
+                        ContentUnavailableView.search(text: filter)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass").font(.largeTitle)
+                            Text("No results").font(.headline)
+                        }.padding()
+                    }
                 } else {
                     List(filtered, id: \.bid) { app in
                         Button {
