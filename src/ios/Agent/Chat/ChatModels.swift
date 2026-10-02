@@ -620,6 +620,13 @@ final class AssistantBlock: Identifiable, ObservableObject {
         case .readImageTool(let path):
             let name = (path as NSString).lastPathComponent
             return (!path.isEmpty && name != "/" && name.contains(".")) ? name : "Read image"
+        case .rootShellTool(let command):
+            if !command.isEmpty { return command }
+            if content.hasPrefix("# ") {
+                let firstLine = content.prefix(while: { $0 != "\n" })
+                return String(firstLine.dropFirst(2))
+            }
+            return "Root command"
         case .memoryTool(let action):
             return action.isEmpty ? "Memory" : action
         case .info:
@@ -632,6 +639,8 @@ enum AssistantBlockKind: Equatable {
     case text
     case thinking
     case shellTool(command: String)
+    /// [zzuu-jb] A `root_execute` call on the jailbroken host device.
+    case rootShellTool(command: String)
     case fileReadTool(path: String)
     case fileWriteTool(path: String)
     case fileEditTool(path: String)

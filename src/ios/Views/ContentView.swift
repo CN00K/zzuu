@@ -8256,6 +8256,19 @@ private struct SettingsSheet: View {
                                 .background(.green, in: Circle())
                         }
                     }
+                    NavigationLink {
+                        JailbreakSettingsView()
+                    } label: {
+                        Label {
+                            Text("Jailbreak SSH")
+                        } icon: {
+                            Image(systemName: "lock.shield")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.red, in: Circle())
+                        }
+                    }
                 }
 
                 Section("Storage") {

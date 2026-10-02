@@ -1,0 +1,81 @@
+#!/bin/sh
+# minis-re-build — trigger a Theos .deb build on the GitHub Actions runner
+# and download the result. [zzuu-re]
+#
+# Usage: minis-re-build <tweak-project-dir> [output-deb-path]
+#   Project dir must contain: control, Makefile, Source/Tweak.xm
+#
+# Env (set in Settings > Environment Variables, injected into the sandbox):
+#   RE_BUILD_TOKEN  GitHub PAT with repo+workflow scopes
+#   RE_BUILD_REPO   owner/repo hosting .github/workflows/build-tweak.yml
+#                   (default: CN00K/zzuu)
+#
+# Flow: tar+base64 the project -> POST workflow_dispatch -> poll artifacts
+#       -> download the .deb. Whole round trip ~2-5 minutes.
+
+set -eu
+
+if [ $# -lt 1 ]; then
+    echo "usage: minis-re-build <project-dir> [output-deb]" >&2
+    exit 2
+fi
+
+PROJ="$1"
+OUT="${2:-$(basename "$PROJ")_out.deb}"
+
+[ -f "$PROJ/control" ] || { echo "error: $PROJ/control not found" >&2; exit 2; }
+[ -f "$PROJ/Makefile" ] || { echo "error: $PROJ/Makefile not found" >&2; exit 2; }
+
+TOKEN="${RE_BUILD_TOKEN:-}"
+REPO="${RE_BUILD_REPO:-CN00K/zzuu}"
+if [ -z "$TOKEN" ]; then
+    echo "error: RE_BUILD_TOKEN env var not set (Settings > Environment Variables)" >&2
+    exit 3
+fi
+
+API="https://api.github.com/repos/$REPO"
+AUTH="Authorization: token $TOKEN"
+
+# 1) package source
+TARBALL=$(mktemp -u /tmp/rebuild.XXXXXX.tar.gz)
+tar czf "$TARBALL" -C "$(dirname "$PROJ")" "$(basename "$PROJ")"
+B64=$(base64 < "$TARBALL" | tr -d '\n')
+rm -f "$TARBALL"
+
+# 2) dispatch
+RESP=$(curl -sf -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+    "$API/actions/workflows/build-tweak.yml/dispatches" \
+    -d "{\"ref\":\"main\",\"inputs\":{\"tweak_source\":\"$B64\"}}") || {
+    echo "error: workflow dispatch failed" >&2; exit 4; }
+
+echo "[re-build] dispatched, waiting for artifact..."
+
+# 3) poll runs + artifacts
+RUN_ID=""
+for i in $(seq 1 20); do
+    sleep 15
+    RUN_ID=$(curl -sf -H "$AUTH" -H "Accept: application/vnd.github+json" \
+        "$API/actions/runs?event=workflow_dispatch&per_page=1" \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); r=d['workflow_runs'][0]; print(r['id'] if r['conclusion'] in ('success','failure') else '')" 2>/dev/null || true)
+    [ -n "$RUN_ID" ] && break
+done
+[ -n "$RUN_ID" ] || { echo "error: run did not finish in 5 min" >&2; exit 5; }
+
+CONCL=$(curl -sf -H "$AUTH" -H "Accept: application/vnd.github+json" \
+    "$API/actions/runs/$RUN_ID" | python3 -c "import json,sys; print(json.load(sys.stdin)['conclusion'])")
+if [ "$CONCL" != "success" ]; then
+    echo "error: build failed ($CONCL). Logs: https://github.com/$REPO/actions/runs/$RUN_ID" >&2
+    curl -sf -H "$AUTH" -H "Accept: application/vnd.github+json" \
+        "$API/actions/runs/$RUN_ID/logs" -o /tmp/rebuild_logs.zip 2>/dev/null || true
+    [ -f /tmp/rebuild_logs.zip ] && echo "logs saved: /tmp/rebuild_logs.zip" >&2
+    exit 6
+fi
+
+# 4) fetch artifact
+ART_URL=$(curl -sf -H "$AUTH" -H "Accept: application/vnd.github+json" \
+    "$API/actions/runs/$RUN_ID/artifacts" \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['artifacts'][0]['archive_download_url'])")
+curl -sfL -H "$AUTH" "$ART_URL" -o /tmp/rebuild_artifact.zip
+python3 -c "import zipfile; z=zipfile.ZipFile('/tmp/rebuild_artifact.zip'); n=[x for x in z.namelist() if x.endswith('.deb')][0]; open('$OUT','wb').write(z.read(n))"
+rm -f /tmp/rebuild_artifact.zip
+echo "[re-build] OK: $OUT ($(wc -c < "$OUT") bytes)"

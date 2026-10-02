@@ -370,6 +370,187 @@ extension AIChatViewModel {
 
         do {
         switch tu.name {
+        case "apps_open":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let openBid = (toolArgs["bundle_id"] as? String) ?? ""
+            guard !openBid.isEmpty else {
+                toolOutput = "Error: Missing required 'bundle_id' parameter."
+                toolSuccess = false
+                break
+            }
+            do {
+                // Two launch paths: uiopen (jb CLI), lsappinfo (LaunchServices).
+                let cmd = "uiopen \(openBid) >/dev/null 2>&1 || lsappinfo launch \(openBid) >/dev/null 2>&1; echo EXIT:$?"
+                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
+                toolSuccess = r.output.contains("EXIT:0")
+                toolOutput = toolSuccess
+                    ? "Launched \(openBid)."
+                    : "Failed to open \(openBid). Output: \(r.output)"
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "container_read":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let rBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let rPath = (toolArgs["relative_path"] as? String) ?? ""
+            let rOffset = (toolArgs["offset"] as? NSNumber).map { $0.intValue } ?? 1
+            let rLines = (toolArgs["lines"] as? NSNumber).map { $0.intValue } ?? 500
+            guard !rBid.isEmpty, !rPath.isEmpty else {
+                toolOutput = "Error: Missing required 'bundle_id' or 'relative_path'."
+                toolSuccess = false
+                break
+            }
+            if rPath.contains("..") {
+                toolOutput = "Error: path rejected ('..' not allowed)."
+                toolSuccess = false
+                break
+            }
+            do {
+                // Resolve container UUID from the bundle id via the metadata
+                // plist; single root_execute round trip: lookup + read.
+                let script = """
+                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(rBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
+                sed -n '\(rOffset),\(rOffset + rLines)p' "$uuid/\(rPath)" 2>/dev/null | head -c 15000
+                """
+                let r = try await executeRootCommand(script, timeout: 60) { _ in }
+                if r.output.contains("CONTAINER_NOT_FOUND") {
+                    toolOutput = "Error: container for \(rBid) not found."
+                    toolSuccess = false
+                } else {
+                    toolOutput = r.output.isEmpty ? "(empty file or read failed)" : r.output
+                    toolSuccess = !r.output.isEmpty
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "container_write_text":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let wBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let wPath = (toolArgs["relative_path"] as? String) ?? ""
+            let wContent = (toolArgs["content"] as? String) ?? ""
+            let wOverwrite = (toolArgs["overwrite"] as? NSNumber)?.boolValue ?? false
+            let wAppend = (toolArgs["append"] as? NSNumber)?.boolValue ?? false
+            guard !wBid.isEmpty, !wPath.isEmpty, !wContent.isEmpty else {
+                toolOutput = "Error: Missing required 'bundle_id', 'relative_path' or 'content'."
+                toolSuccess = false
+                break
+            }
+            if wPath.contains("..") {
+                toolOutput = "Error: path rejected ('..' not allowed)."
+                toolSuccess = false
+                break
+            }
+            do {
+                // Content base64-piped: multi-line text, quotes and backticks
+                // survive verbatim. Mode: append >> / overwrite > / create-only.
+                let b64 = Data(wContent.utf8).base64EncodedString()
+                let redirect = wAppend ? ">>" : ">"
+                let existsGuard = (wAppend || wOverwrite)
+                    ? ""
+                    : "[ -f \"$uuid/\(wPath)\" ] && { echo EXISTS; exit 0; }" + "\n                "
+                let script = """
+                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(wBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
+                mkdir -p "$uuid/$(dirname '\(wPath)')" 2>/dev/null
+                \(existsGuard)echo \(b64) | base64 -d \(redirect) "$uuid/\(wPath)" && echo WRITE_OK
+                """
+                let r = try await executeRootCommand(script, timeout: 60) { _ in }
+                if r.output.contains("EXISTS") {
+                    toolOutput = "Error: file exists and overwrite was not set. Pass overwrite:true to replace."
+                    toolSuccess = false
+                } else if r.output.contains("CONTAINER_NOT_FOUND") {
+                    toolOutput = "Error: container for \(wBid) not found."
+                    toolSuccess = false
+                } else if r.output.contains("WRITE_OK") {
+                    toolOutput = "Written to \(wBid)/\(wPath) (\(wContent.count) chars)."
+                    toolSuccess = true
+                } else {
+                    toolOutput = "Error: write failed. Output: \(r.output)"
+                    toolSuccess = false
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "root_execute":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured. Ask the user to set host/port/user/password under Settings > Jailbreak SSH."
+                toolSuccess = false
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
+                }
+                break
+            }
+            let (rCommand, rTimeout, _) = parseToolInput(from: argsJson)
+            if rCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                toolOutput = "Error: Missing required 'command' parameter for root_execute."
+                toolSuccess = false
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
+                }
+                break
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].kind = .rootShellTool(command: rCommand)
+            }
+            do {
+                var rLineBuffer: [String] = []
+                var rLastFlush = Date.distantPast
+                let flushRLines: () -> Void = { [weak self] in
+                    guard let self, !rLineBuffer.isEmpty else { return }
+                    let joined = rLineBuffer.joined(separator: "\n")
+                    rLineBuffer.removeAll()
+                    rLastFlush = Date()
+                    Task { @MainActor in
+                        guard msgIdx < self.messages.count,
+                              blockIdx < self.messages[msgIdx].blocks.count else { return }
+                        let current = self.messages[msgIdx].blocks[blockIdx].content
+                        let newContent = current.hasSuffix("Executing...")
+                            ? joined : current + "\n" + joined
+                        self.messages[msgIdx].blocks[blockIdx].content =
+                            newContent.count > 30_000
+                            ? "…[output truncated]…\n" + String(newContent.suffix(30_000))
+                            : newContent
+                        self.scrollToBottomSignal.send()
+                    }
+                }
+                let rResult = try await executeRootCommand(rCommand, timeout: rTimeout) { line in
+                    rLineBuffer.append(line)
+                    if Date().timeIntervalSince(rLastFlush) >= 0.2 { flushRLines() }
+                }
+                flushRLines()
+                toolOutput = rResult.output
+                toolSuccess = rResult.exitCode == 0
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                let existing = messages[msgIdx].blocks[blockIdx].content
+                if existing.isEmpty || existing.hasSuffix("Executing...") {
+                    let trimmed = toolOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { messages[msgIdx].blocks[blockIdx].content = trimmed }
+                }
+            }
+            break
         case "shell_execute":
             let (command, timeout, delay) = parseToolInput(from: argsJson)
 
@@ -1134,7 +1315,7 @@ extension AIChatViewModel {
             let offloadResult = offloadToolOutput(toolOutput, toolName: tu.name, toolId: tu.id)
             let offloadMinisURL = linuxPathToMinisURL(offloadResult.linuxPath)
             let truncatedBody: String
-            if tu.name == "shell_execute" || tu.name == "browser_use" {
+            if tu.name == "shell_execute" || tu.name == "root_execute" || tu.name == "browser_use" {
                 let halfLen = maxToolResultLength / 2
                 truncatedBody = String(toolOutput.prefix(halfLen))
                     + "\n\n...\n\n"

@@ -1084,6 +1084,7 @@ struct ToolLiveSheet: View {
 
     private var isCurrentShell: Bool {
         if case .shellTool = block.kind { return true }
+        if case .rootShellTool = block.kind { return true }
         return false
     }
 
@@ -1323,6 +1324,8 @@ struct ToolLiveSheet: View {
             return ""
         case .shellTool(let cmd):
             return "shell_execute(\(truncateParam(cmd)))"
+        case .rootShellTool(let cmd):
+            return "root_execute(\(truncateParam(cmd)))"
         case .fileReadTool(let path):
             return "file_read(\(truncateParam(path)))"
         case .fileWriteTool(let path):
@@ -1350,6 +1353,7 @@ struct ToolLiveSheet: View {
     private var toolIcon: some View {
         switch block.kind {
         case .shellTool: Image(systemName: "terminal")
+        case .rootShellTool: Image(systemName: "lock.shield")
         case .fileReadTool: Image(systemName: "doc.text")
         case .fileWriteTool: Image(systemName: "doc.text.fill")
         case .fileEditTool: Image(systemName: "square.and.pencil")
@@ -2686,7 +2690,8 @@ struct ToolLiveSheet: View {
 
     private var toolTitle: String {
         switch block.kind {
-        case .shellTool: return "Minis is using Shell"
+        case .shellTool: return "zzuu is using Shell"
+        case .rootShellTool: return "zzuu is using root_execute"
         case .fileReadTool: return "Minis is reading File"
         case .fileWriteTool: return "Minis is using Editor"
         case .fileEditTool: return "Minis is editing File"
@@ -2721,6 +2726,7 @@ struct ToolLiveSheet: View {
     private var accentColor: Color {
         switch block.kind {
         case .shellTool: return .green
+        case .rootShellTool: return .red
         case .fileReadTool: return .primary
         case .fileWriteTool: return .blue
         case .fileEditTool: return .orange
@@ -3119,12 +3125,14 @@ private struct ToolPreviewThumbnail: View {
 
     private var isShell: Bool {
         if case .shellTool = block.kind { return true }
+        if case .rootShellTool = block.kind { return true }
         return false
     }
 
     private var accentColor: Color {
         switch block.kind {
         case .shellTool: return .green
+        case .rootShellTool: return .red
         case .fileReadTool: return .cyan
         case .fileWriteTool: return .blue
         case .fileEditTool: return .orange

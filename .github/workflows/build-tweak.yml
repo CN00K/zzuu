@@ -1,0 +1,45 @@
+name: Build zzuu Tweak (Theos .deb)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tweak_source:
+        description: "Base64-encoded tar.gz of the tweak project (control + Makefile + Source/Tweak.xm)"
+        required: true
+        type: string
+
+jobs:
+  build-deb:
+    name: Theos package (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Decode tweak source
+        run: |
+          mkdir -p ~/tweak_build && cd ~/tweak_build
+          echo "${{ github.event.inputs.tweak_source }}" | base64 -d > tweak.tar.gz
+          tar xzf tweak.tar.gz
+          ls -la
+          # find the project dir (contains control)
+          PROJ=$(dirname $(find . -maxdepth 2 -name control | head -1))
+          echo "PROJ=$PROJ" > /tmp/proj.env
+          cat /tmp/proj.env
+
+      - name: Setup Theos
+        run: |
+          [ -d ~/theos ] || git clone --depth 1 https://github.com/theos/theos.git ~/theos
+          export THEOS=~/theos
+          echo "THEOS=$THEOS" >> /tmp/proj.env
+
+      - name: Package
+        run: |
+          source /tmp/proj.env
+          cd ~/tweak_build/$PROJ
+          make package_final 2>&1 | tee build.log
+          ls -la packages/*.deb
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: tweak-deb
+          path: ~/tweak_build/*/packages/*.deb

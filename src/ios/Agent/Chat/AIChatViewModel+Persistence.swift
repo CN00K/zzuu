@@ -1063,7 +1063,7 @@ extension AIChatViewModel {
 
             let isToolBlock: Bool
             switch block.kind {
-            case .shellTool, .fileReadTool, .fileWriteTool, .fileEditTool, .browserTool, .readImageTool, .memoryTool, .delegateTool:
+            case .shellTool, .rootShellTool, .fileReadTool, .fileWriteTool, .fileEditTool, .browserTool, .readImageTool, .memoryTool, .delegateTool:
                 isToolBlock = true
             default:
                 isToolBlock = false
@@ -1088,7 +1088,7 @@ extension AIChatViewModel {
             resultIdx += 1
 
             switch block.kind {
-            case .shellTool(let cmd):
+            case .shellTool(let cmd), .rootShellTool(let cmd):
                 block.content = tr.output
             case .browserTool, .readImageTool:
                 block.content = tr.output

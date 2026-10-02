@@ -156,6 +156,66 @@ extension AIChatViewModel {
             ))
         }
 
+        // [zzuu-apps] App target tools: open an app by bundle id and
+        // read/write files inside its data container. Gated on Jailbreak SSH
+        // (both need host access); the container tools need root anyway.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "apps_open",
+                description: "Open (launch/foreground) an installed app on the iOS host by bundle id. Use 'apple-device apps' or the attached app context to find the bundle id. The system switches to the target app.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "bundle_id": AgentToolParam(type: .string, description: "The bundle identifier of the app to open, e.g. com.ss.iphone.ugc.Aweme."),
+                ],
+                required: ["tool_title", "bundle_id"],
+                propertyOrdering: ["tool_title", "bundle_id"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "container_read",
+                description: "Read a file from an app's data container on the iOS host. The container is resolved from the bundle id — no need to know its UUID. Returns file content (truncated at 15000 chars; use offset/lines for large files).",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle id."),
+                    "relative_path": AgentToolParam(type: .string, description: "Path INSIDE the app's data container, e.g. Library/Preferences/com.example.app.plist."),
+                    "offset": AgentToolParam(type: .integer, description: "1-based line offset (default 1)."),
+                    "lines": AgentToolParam(type: .integer, description: "Max lines to return (default 500)."),
+                ],
+                required: ["tool_title", "bundle_id", "relative_path"],
+                propertyOrdering: ["tool_title", "bundle_id", "relative_path", "offset", "lines"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "container_write_text",
+                description: "Write UTF-8 text into an app's data container on the iOS host. Relative path is strictly limited to that container. Does NOT overwrite existing files by default — pass overwrite:true to replace. DANGEROUS: writes into another app's sandbox; only use when the user asked for it.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle id."),
+                    "relative_path": AgentToolParam(type: .string, description: "Path INSIDE the app's data container."),
+                    "content": AgentToolParam(type: .string, description: "UTF-8 text to write. Large content: write in chunks with append:true."),
+                    "overwrite": AgentToolParam(type: .boolean, description: "If true, replace an existing file (default false)."),
+                    "append": AgentToolParam(type: .boolean, description: "If true, append to the file instead of creating."),
+                ],
+                required: ["tool_title", "bundle_id", "relative_path", "content"],
+                propertyOrdering: ["tool_title", "bundle_id", "relative_path", "content", "overwrite", "append"]
+            ))
+        }
+
+        // [zzuu-jb] root_execute: run commands on the jailbroken iOS host via
+        // OpenSSH (root). Only advertised when Settings > Jailbreak SSH is
+        // configured; otherwise the model never learns the tool exists.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "root_execute",
+                description: "Execute a command as ROOT on the jailbroken iOS host device (outside the Linux sandbox). Runs over SSH to the local OpenSSH daemon; the password is injected once during setup and never appears in commands afterwards. Use for: frida-server control, dumping decrypted app binaries, class-dump, reading system logs, package management (apt/dpkg), anything needing real-device access. The Linux sandbox (shell_execute) cannot see host files and vice versa. Default timeout is 15 minutes.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "command": AgentToolParam(type: .string, description: "The shell command to execute on the iOS host (dash/sh syntax, not bash). Multi-line supported. Keep under 1000 chars; for longer scripts write them to a file first."),
+                    "timeout": AgentToolParam(type: .integer, description: "Timeout in seconds (default: 900)."),
+                ],
+                required: ["tool_title", "command"],
+                propertyOrdering: ["tool_title", "command", "timeout"]
+            ))
+        }
+
         // [T-ios-vision-group #182] Expose read_image when the model can see
         // images ITSELF, or when a Vision Group is configured to see them on its
         // behalf. Previously a text-only model simply never got this tool, so an
