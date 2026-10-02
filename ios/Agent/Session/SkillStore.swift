@@ -387,6 +387,23 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             guard existing.version < Self.skillCreatorVersion else { return }
         }
         _ = try? importSkill(content: Self.skillCreatorContent, source: .bundled)
+
+        // [zzuu-re] Bundled reverse-engineering skill pack (triage / frida /
+        // class-dump / anti-detect / theos). Imported once; upgrades follow
+        // the same version-gate pattern as skill-creator.
+        for content in [
+            BundledRESkills.iosTriage,
+            BundledRESkills.fridaDynamic,
+            BundledRESkills.objcApi,
+            BundledRESkills.antiDetect,
+            BundledRESkills.theosTweak,
+        ] {
+            let parsed = Self.parse(skillMD: content)
+            let id = Self.slugify(parsed.name)
+            if let existing = skills.first(where: { $0.id == id }),
+               existing.version >= BundledRESkills.version { continue }
+            _ = try? importSkill(content: content, source: .bundled)
+        }
     }
 
     // MARK: - One-time Migration: re-sync skills with bundled files

@@ -343,6 +343,7 @@
 		E5MSC0001 /* MarkdownSnapshotCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5MSC0011 /* MarkdownSnapshotCollector.swift */; };
 		E5MSS0001 /* ModelSearchScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5MSS0011 /* ModelSearchScorer.swift */; };
 		E5N0000012F3B941A00049557 /* SkillStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5N0000112F3B941A00049557 /* SkillStore.swift */; };
+		ZZRE00001 /* BundledRESkills.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZZRE00011 /* BundledRESkills.swift */; };
 		E5N0000022F3B941A00049557 /* SessionSkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5N0000122F3B941A00049557 /* SessionSkillsView.swift */; };
 		E5N0000032F3B941A00049557 /* SkillsManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5N0000132F3B941A00049557 /* SkillsManagementView.swift */; };
 		E5N0000042F3B941A00049557 /* MemoryManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5N0000142F3B941A00049557 /* MemoryManagementView.swift */; };
@@ -1073,6 +1074,7 @@
 		E5MSC0011 /* MarkdownSnapshotCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownSnapshotCollector.swift; sourceTree = "<group>"; };
 		E5MSS0011 /* ModelSearchScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSearchScorer.swift; sourceTree = "<group>"; };
 		E5N0000112F3B941A00049557 /* SkillStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillStore.swift; sourceTree = "<group>"; };
+		ZZRE00011 /* BundledRESkills.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundledRESkills.swift; sourceTree = "<group>"; };
 		E5N0000122F3B941A00049557 /* SessionSkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSkillsView.swift; sourceTree = "<group>"; };
 		E5N0000132F3B941A00049557 /* SkillsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsManagementView.swift; sourceTree = "<group>"; };
 		E5N0000142F3B941A00049557 /* MemoryManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryManagementView.swift; sourceTree = "<group>"; };
@@ -2193,6 +2195,7 @@
 				E5S000013 /* SessionForkManager.swift */,
 				E5LOCK101 /* SessionLockStore.swift */,
 				E5N0000112F3B941A00049557 /* SkillStore.swift */,
+				ZZRE00011 /* BundledRESkills.swift */,
 				F1MCPSTORE /* MCPStore.swift */,
 				F1MCPOAUTH /* MCPOAuthController.swift */,
 				F1MCPDCR /* MCPOAuthDiscovery.swift */,
@@ -3115,6 +3118,7 @@
 				E5X000001 /* SwiftMathRenderer.swift in Sources */,
 				E5Y000001 /* MathRenderScheduler.swift in Sources */,
 				E5N0000012F3B941A00049557 /* SkillStore.swift in Sources */,
+				ZZRE00001 /* BundledRESkills.swift in Sources */,
 				F1MCPSTOREB /* MCPStore.swift in Sources */,
 				F1MCPOAUTHB /* MCPOAuthController.swift in Sources */,
 				F1MCPDCRB /* MCPOAuthDiscovery.swift in Sources */,
