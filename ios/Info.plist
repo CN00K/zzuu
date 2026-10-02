@@ -4,8 +4,10 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.openminis.app.liveactivity-refresh</string>
+		<string>com.zzuu.zero.liveactivity-refresh</string>
 	</array>
+	<key>CFBundleDisplayName</key>
+	<string>zzuu</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -29,7 +31,7 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.openminis.app.minisbak</string>
+				<string>com.zzuu.zero.minisbak</string>
 			</array>
 		</dict>
 	</array>
@@ -163,7 +165,7 @@
 			<string>Claude OAuth Callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.openminis.app</string>
+				<string>com.zzuu.zero</string>
 			</array>
 		</dict>
 		<dict>
@@ -256,7 +258,7 @@
 			<key>UTTypeDescription</key>
 			<string>Minis Backup</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.openminis.app.minisbak</string>
+			<string>com.zzuu.zero.minisbak</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

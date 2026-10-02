@@ -43,7 +43,7 @@ struct CloudSyncSettingsView: View {
                 }
             }
         } message: {
-            Text("This will permanently delete everything Minis has uploaded to your iCloud account, across ALL of your devices:\n\n• Chat sessions & messages\n• Session files & attachments\n• Skills\n• Provider configurations\n• Environment variables\n\nThis device's local data will NOT be deleted — only the cloud copy. After the wipe, this device will re-upload its local content to a fresh iCloud zone.")
+            Text("This will permanently delete everything zzuu has uploaded to your iCloud account, across ALL of your devices:\n\n• Chat sessions & messages\n• Session files & attachments\n• Skills\n• Provider configurations\n• Environment variables\n\nThis device's local data will NOT be deleted — only the cloud copy. After the wipe, this device will re-upload its local content to a fresh iCloud zone.")
         }
         .alert("Are you absolutely sure?", isPresented: $showDeleteCloudStep2) {
             Button("Cancel", role: .cancel) {}

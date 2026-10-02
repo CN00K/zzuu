@@ -306,7 +306,7 @@ struct StorageManagementView: View {
             } header: {
                 Text("Overview")
             } footer: {
-                Text("Total is the app's full container size and should match the figure iOS Settings shows for Minis. \"Other\" covers everything not itemized above, so the categories always add up to the total.")
+                Text("Total is the app's full container size and should match the figure iOS Settings shows for zzuu. \"Other\" covers everything not itemized above, so the categories always add up to the total.")
             }
 
             Section("Sessions") {
@@ -389,7 +389,7 @@ struct SessionStorageDetailView: View {
 
     var body: some View {
         List {
-            Section("Minis Files") {
+            Section("zzuu Files") {
                 if currentMinisSize > 0 {
                     NavigationLink {
                         FileBrowserView(rootPath: minisURL)
