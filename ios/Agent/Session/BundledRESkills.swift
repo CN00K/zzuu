@@ -15,6 +15,10 @@ import Foundation
 //   re-theos-tweak     — Theos Tweak.xm → .deb build on server → install
 //   re-keychain        — jailbreak keychain dump (tokens/credentials)
 //   re-flutter         — Flutter app detection + Dart source recovery
+//   re-netcap          — network capture: mitmproxy + frida httpdump + proxy config
+//   re-sign-extract    — signature/encryption algorithm extraction & reproduction
+//   re-netcap          — network capture: mitmproxy + frida httpdump + proxy config
+//   re-sign-extract    — signature/encryption algorithm extraction & reproduction
 final class BundledRESkills {
 
     static let version = "1.0.0"
@@ -643,5 +647,224 @@ JSEOF
 - dart_syms.txt 业务方法清单(标注疑似签名/网络/加密的)
 - 若反编译成功:dart_out/ 伪代码目录
 - 下一步建议:hook 具体方法 or 直接走 Theos 短路(见 re-theos-tweak)
+"""
+
+    // MARK: re-netcap
+
+    static let netCapture = """
+---
+name: re-netcap
+version: \(BundledRESkills.version)
+description: iOS App 网络流量捕获完整链路:mitmproxy 部署、真机代理配置、证书信任、frida httpdump 兜底。需要抓包分析 API 时使用。
+---
+
+# 网络流量捕获
+
+目标:拿到目标 App 的完整 HTTP(S) 请求(方法/URL/头/体)。两条路线并行:
+**A. mitmproxy**(标准 HTTPS 解密,前提是 pinning 已拆或 ATS 豁免)
+**B. frida httpdump**(内存层抓,不依赖证书信任)
+
+## 0. 前置侦察
+
+先看 ATS 豁免域名(re-ios-triage 第 4 节)——这些域名明文可抓,优先验证。
+pinning 判断:strings 找 Security.framework 调用密度 / class-dump 找自定义 pinning 类。
+
+## 1. 路线 A:mitmproxy(沙箱监听 + 真机代理)
+
+**沙箱侧起代理:**
+```sh
+pip3 install -q mitmproxy 2>/dev/null || true
+nohup mitmdump -p 8080 --set flow_detail=2 -w /var/minis/workspace/re/cap.flow > /var/minis/workspace/re/mitm.log 2>&1 &
+curl -sf http://127.0.0.1:8080 >/dev/null && echo MITM_UP
+```
+
+**真机侧配代理:**
+```
+root_execute: ifconfig en0 | grep "inet " | awk '{print $2}'    # 手机 IP(沙箱看不到宿主网卡)
+```
+推荐:生成带代理+CA 证书的 .mobileconfig,回环 HTTP 传过去
+`root_execute: profiles install -path /var/mobile/proxy.mobileconfig` 一条命令装好。
+手动兜底:让用户在 设置>Wi-Fi>当前网络>配置代理>手动 填 手机IP:8080。
+
+**安装 CA 证书(HTTPS 解密前提):**
+```sh
+ls ~/.mitmproxy/mitmproxy-ca-cert.pem     # 沙箱侧导出
+```
+传到真机后越狱设备直接塞信任链:
+```
+root_execute: cp /var/mobile/mitmproxy-ca-cert.pem /var/jb/var/ca_root.pem 2>/dev/null || echo "路径因越狱环境而异"
+# 通用兜底:设置>通用>关于>证书信任设置 手动信任
+```
+
+**验证:**
+```
+root_execute: curl -x http://127.0.0.1:8080 https://www.apple.com -k -o /dev/null -w "%{http_code}\n"
+grep -cE "GET|POST" /var/minis/workspace/re/mitm.log
+```
+
+## 2. 路线 B:frida httpdump(pinning 拆不掉时)
+
+```
+root_execute: [ -d /var/mobile/httpdump ] || git clone --depth 1 https://github.com/suifei/httpdump /var/mobile/httpdump
+root_execute: cd /var/mobile/httpdump && npm i >/dev/null 2>&1 && npm run build >/dev/null 2>&1
+root_execute: /var/jb/usr/bin/frida -n <App> -l /var/mobile/httpdump/dist/httpdump.js --no-pause 2>&1 | tee /tmp/httpdump.log
+```
+输出是结构化 JSON(方法/URL/头/体),`root_execute: tail -c 50000 /tmp/httpdump.log` 回收。
+注意:httpdump 走 NSURLSession 层,**native 网络栈(CFNetwork 直调、自研 TCP)抓不到**,
+那种情况退回 mitmproxy + 拆 pinning。
+
+## 3. 流量分析(沙箱侧)
+
+```sh
+# mitmproxy flow 解析
+python3 - <<'EOF'
+from mitmproxy.io import FlowReader
+with open("/var/minis/workspace/re/cap.flow","rb") as f:
+    for flow in FlowReader(f).streams():
+        req, resp = flow.request, flow.response
+        print(req.method, req.pretty_url, resp.status_code if resp else "-", len(resp.content or b"") if resp else 0)
+EOF
+# 按域名聚合,找业务接口
+grep -oE "https?://[^/]+" /var/minis/workspace/re/mitm.log | sort | uniq -c | sort -rn | head
+```
+
+## 4. 产出
+
+- 接口清单(方法/路径/参数结构/鉴权方式)
+- 关键接口各留一份完整 req/resp 存档
+- 标注哪些接口有 sign 参数 → 交给 re-sign-extract
+
+## 纪律
+
+- mitmdump 用完必须 pkill,端口 8080 别裸奔
+- flow 文件含敏感数据,留本地,不进 memory
+- 抓包前确认用户在测试环境/自己的账号
+"""
+
+    // MARK: re-sign-extract
+
+    static let signExtract = """
+---
+name: re-sign-extract
+version: \(BundledRESkills.version)
+description: 签名/加密算法提取与复现:定位 sign 参数生成函数、hook 密码学原语采集输入输出、沙箱内验证算法、Python 复现。API 有 sign/token 参数无法伪造时触发。
+---
+
+# 签名算法提取与复现
+
+终极目标:在沙箱里用 Python 重新实现目标的签名算法,之后可任意构造合法请求。
+整个逆向流程价值最高的一步。方法论:
+
+```
+定位 → 采集 → 假设 → 验证 → 复现
+```
+
+## 1. 定位签名函数
+
+**静态(class-dump 产物,见 re-objc-api):**
+```sh
+grep -riE "sign|signature|token|nonce|timestamp" headers/*.h | grep -vE "design|assign" | head -30
+# 典型模式:
+#   - (NSString *)makeSign:(NSDictionary *)params
+#   + (NSString *)signWithKey:(NSString *)key body:(NSString *)body
+#   参数排序拼接 → hash 的固定套路
+```
+
+**动态确认(谁真的在算):**
+```
+root_execute: cat > /tmp/findsign.js <<'JSEOF'
+["CC_MD5","CC_SHA1","CC_SHA256","CC_SHA512","CCCrypt","CCCryptorUpdate"].forEach(function(n) {
+  var p = Module.findExportByName("libcommonCrypto.dylib", n);
+  if (!p) p = Module.findExportByName(null, n);
+  if (p) Interceptor.attach(p, {
+    onEnter: function(a) {
+      console.log("CRYPTO " + n + " from: " + Thread.backtrace(this.context, Backtracer.FUZZY).map(DebugSymbol.fromAddress).slice(-3).join(" <- "));
+    }
+  });
+});
+JSEOF
+root_execute: /var/jb/usr/bin/frida -n <App> -l /tmp/findsign.js --no-pause 2>&1 | tee /tmp/findsign.log
+# 触发一次请求,backtrace 里的业务符号就是签名函数
+```
+
+## 2. 采集输入输出对
+
+hook 签名函数本体,记录 (入参 → 返回值),多采几组(≥5 组,变量要覆盖):
+```
+root_execute: cat > /tmp/collect.js <<'JSEOF'
+var cls = ObjC.classes.<SignClass>;
+Interceptor.attach(cls["-<signMethod>:"].implementation, {
+  onEnter: function(a) { this.in = new ObjC.Object(a[2]).toString(); },
+  onLeave: function(r) { console.log(JSON.stringify({inp: this.in, out: new ObjC.Object(r).toString()})); }
+});
+JSEOF
+# 让 App 正常操作产生不同请求,收集到 /tmp/collect.log
+```
+同时记下:时间戳字段、nonce、app_key 等常量(strings 搜 appkey/secret/salt)。
+
+## 3. 假设 + 沙箱验证
+
+常见套路优先级(先试简单的):
+1. `md5(sorted_params + secret)`
+2. `md5(concat(values) + salt)`
+3. `sha256(json(params) + key)`
+4. `hmac_sha256(key, sorted_kv_string)`
+5. AES-CBC/ECB 加密后再 base64/hex
+
+**沙箱内批量验证脚本模板:**
+```sh
+cat > /var/minis/workspace/re/verify_sign.py <<'PYEOF'
+import hashlib, hmac
+pairs = [
+    # 从 collect.log 粘进来:{"inp": ..., "out": ...}
+]
+secret_candidates = ["<appkey>", "<salt>", ""]
+for p in pairs:
+    s = p["inp"]
+    cands = {
+        "md5(s+sec)": lambda sec: hashlib.md5((s+sec).encode()).hexdigest(),
+        "md5(sec+s)": lambda sec: hashlib.md5((sec+s).encode()).hexdigest(),
+        "sha256(s+sec)": lambda sec: hashlib.sha256((s+sec).encode()).hexdigest(),
+        "hmac_md5": lambda sec: hmac.new(sec.encode(), s.encode(), hashlib.md5).hexdigest(),
+        "hmac_sha256": lambda sec: hmac.new(sec.encode(), s.encode(), hashlib.sha256).hexdigest(),
+    }
+    for name, fn in cands.items():
+        for sec in secret_candidates:
+            if fn(sec) == p["out"]:
+                print("MATCH:", name, "secret=", repr(sec))
+PYEOF
+python3 /var/minis/workspace/re/verify_sign.py
+```
+全部不中 → 有预处理(排序/特殊字符/base64 变体)或密钥不在 strings 里:
+回到第 2 步加采数据点,或 `r2 -A` 后 `pdf @ <签名函数地址>` 逐行读逻辑。
+
+## 4. 复现与实战
+
+验证通过后写成可复用模块:
+```sh
+cat > /var/minis/workspace/re/<app>_api.py <<'PYEOF'
+import hashlib, time, uuid, requests
+def sign(params, secret): ...   # 上面验证过的算法
+def call(endpoint, **kw):
+    params.update({"ts": int(time.time()), "nonce": uuid.uuid4().hex[:8]})
+    params["sign"] = sign(params, "<SECRET>")
+    return requests.get("https://<host>/<endpoint>", params=params)
+PYEOF
+# 沙箱内直接打真实接口验证
+python3 -c "import sys; sys.path.insert(0,'/var/minis/workspace/re'); from <app>_api import call; print(call('<endpoint>').text[:200])"
+```
+
+## 5. 升级路线(算法太复杂时)
+
+- **黑盒代签**:不复现算法,Theos tweak %hook 签名函数,把任意参数喂给 App 自己算,
+  结果回传沙箱(re-theos-tweak 配合)
+- **内存取钥**:密钥可能在 Keychain/Secure Enclave → re-keychain 或 hook kdf
+- **纯 native 签名**(无 ObjC 层):stalker 跟踪汇编,或服务器上 Ghidra MCP 深度分析
+
+## 纪律
+
+- 每组采集数据存盘:/var/minis/workspace/re/<app>/sign_pairs.jsonl
+- 验证脚本迭代历史保留,失败假设也记下来(避免重复试)
+- 复现成功后:接口文档 + 可用 client 脚本一并交付
 """
 }
