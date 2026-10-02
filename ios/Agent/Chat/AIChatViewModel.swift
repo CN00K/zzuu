@@ -2353,7 +2353,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // enumValues use, so a name can never appear in one and not the other.
             + ((isHelper || !Self.toolEnabled(.agents)) ? "" : Self.subAgentRosterSection())
             + "- memory_write: Save a memory entry to today's daily log (YYYY-MM-DD.md). Use proactively to note user preferences, project patterns, and important context.\n"
-            + "- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge.\n\n"
+            + "- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge.\n"
+            + (JailbreakConfigStore.shared.isConfigured
+               ? "- root_execute: Execute a command as root on the jailbroken iOS HOST device (outside the Linux sandbox) via local SSH. Use it for host-level work: frida, dumping decrypted binaries, class-dump, apt packages, system logs. The sandbox (shell_execute) and the host are separate filesystems.\n"
+               : "")
+            + "\n"
             + "Current time (approximate): \(approximateTimeString) (\(TimeZone.current.identifier)). "
             + "Device languages: \((UserDefaults.standard.object(forKey: "AppleLanguages") as? [String] ?? Locale.preferredLanguages).joined(separator: ", ")).\n\n"
             + "Shared directory /var/minis/ (bidirectional read/write between shell and app):\n"

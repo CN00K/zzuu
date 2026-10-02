@@ -156,6 +156,23 @@ extension AIChatViewModel {
             ))
         }
 
+        // [zzuu-jb] root_execute: run commands on the jailbroken iOS host via
+        // OpenSSH (root). Only advertised when Settings > Jailbreak SSH is
+        // configured; otherwise the model never learns the tool exists.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "root_execute",
+                description: "Execute a command as ROOT on the jailbroken iOS host device (outside the Linux sandbox). Runs over SSH to the local OpenSSH daemon; the password is injected once during setup and never appears in commands afterwards. Use for: frida-server control, dumping decrypted app binaries, class-dump, reading system logs, package management (apt/dpkg), anything needing real-device access. The Linux sandbox (shell_execute) cannot see host files and vice versa. Default timeout is 15 minutes.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "command": AgentToolParam(type: .string, description: "The shell command to execute on the iOS host (dash/sh syntax, not bash). Multi-line supported. Keep under 1000 chars; for longer scripts write them to a file first."),
+                    "timeout": AgentToolParam(type: .integer, description: "Timeout in seconds (default: 900)."),
+                ],
+                required: ["tool_title", "command"],
+                propertyOrdering: ["tool_title", "command", "timeout"]
+            ))
+        }
+
         // [T-ios-vision-group #182] Expose read_image when the model can see
         // images ITSELF, or when a Vision Group is configured to see them on its
         // behalf. Previously a text-only model simply never got this tool, so an

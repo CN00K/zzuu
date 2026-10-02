@@ -42,6 +42,10 @@ struct AssistantBlockView: View {
             ToolCapsuleView(block: block, icon: "terminal", accentColor: .green,
                             commandStartTime: commandStartTime, onStop: onStop, browserPool: browserPool,
                             toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+        case .rootShellTool:
+            ToolCapsuleView(block: block, icon: "lock.shield", accentColor: .red,
+                            commandStartTime: commandStartTime, onStop: onStop, browserPool: browserPool,
+                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
         case .fileReadTool:
             ToolCapsuleView(block: block, icon: "doc.text", accentColor: .cyan,
                             commandStartTime: commandStartTime, onStop: onStop,
@@ -291,6 +295,7 @@ struct ToolCapsuleView: View {
         let toolName: String
         switch block.kind {
         case .shellTool:     toolName = "shell_execute"
+        case .rootShellTool: toolName = "root_execute"
         case .fileReadTool:  toolName = "file_read"
         case .fileWriteTool: toolName = "file_write"
         case .fileEditTool:  toolName = "file_edit"

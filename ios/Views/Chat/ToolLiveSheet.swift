@@ -1084,6 +1084,7 @@ struct ToolLiveSheet: View {
 
     private var isCurrentShell: Bool {
         if case .shellTool = block.kind { return true }
+        if case .rootShellTool = block.kind { return true }
         return false
     }
 
@@ -3119,6 +3120,7 @@ private struct ToolPreviewThumbnail: View {
 
     private var isShell: Bool {
         if case .shellTool = block.kind { return true }
+        if case .rootShellTool = block.kind { return true }
         return false
     }
 

@@ -632,6 +632,8 @@ enum AssistantBlockKind: Equatable {
     case text
     case thinking
     case shellTool(command: String)
+    /// [zzuu-jb] A `root_execute` call on the jailbroken host device.
+    case rootShellTool(command: String)
     case fileReadTool(path: String)
     case fileWriteTool(path: String)
     case fileEditTool(path: String)

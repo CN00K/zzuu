@@ -370,6 +370,67 @@ extension AIChatViewModel {
 
         do {
         switch tu.name {
+        case "root_execute":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured. Ask the user to set host/port/user/password under Settings > Jailbreak SSH."
+                toolSuccess = false
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
+                }
+                break
+            }
+            let (rCommand, rTimeout, _) = parseToolInput(from: argsJson)
+            if rCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                toolOutput = "Error: Missing required 'command' parameter for root_execute."
+                toolSuccess = false
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
+                }
+                break
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].kind = .rootShellTool(command: rCommand)
+            }
+            do {
+                var rLineBuffer: [String] = []
+                var rLastFlush = Date.distantPast
+                let flushRLines: () -> Void = { [weak self] in
+                    guard let self, !rLineBuffer.isEmpty else { return }
+                    let joined = rLineBuffer.joined(separator: "\n")
+                    rLineBuffer.removeAll()
+                    rLastFlush = Date()
+                    Task { @MainActor in
+                        guard msgIdx < self.messages.count,
+                              blockIdx < self.messages[msgIdx].blocks.count else { return }
+                        let current = self.messages[msgIdx].blocks[blockIdx].content
+                        let newContent = current.hasSuffix("Executing...")
+                            ? joined : current + "\n" + joined
+                        self.messages[msgIdx].blocks[blockIdx].content =
+                            newContent.count > 30_000
+                            ? "…[output truncated]…\n" + String(newContent.suffix(30_000))
+                            : newContent
+                        self.scrollToBottomSignal.send()
+                    }
+                }
+                let rResult = try await executeRootCommand(rCommand, timeout: rTimeout) { line in
+                    rLineBuffer.append(line)
+                    if Date().timeIntervalSince(rLastFlush) >= 0.2 { flushRLines() }
+                }
+                flushRLines()
+                toolOutput = rResult.output
+                toolSuccess = rResult.exitCode == 0
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                let existing = messages[msgIdx].blocks[blockIdx].content
+                if existing.isEmpty || existing.hasSuffix("Executing...") {
+                    let trimmed = toolOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { messages[msgIdx].blocks[blockIdx].content = trimmed }
+                }
+            }
+            break
         case "shell_execute":
             let (command, timeout, delay) = parseToolInput(from: argsJson)
 
@@ -1134,7 +1195,7 @@ extension AIChatViewModel {
             let offloadResult = offloadToolOutput(toolOutput, toolName: tu.name, toolId: tu.id)
             let offloadMinisURL = linuxPathToMinisURL(offloadResult.linuxPath)
             let truncatedBody: String
-            if tu.name == "shell_execute" || tu.name == "browser_use" {
+            if tu.name == "shell_execute" || tu.name == "root_execute" || tu.name == "browser_use" {
                 let halfLen = maxToolResultLength / 2
                 truncatedBody = String(toolOutput.prefix(halfLen))
                     + "\n\n...\n\n"

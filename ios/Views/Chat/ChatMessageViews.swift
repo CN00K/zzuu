@@ -255,6 +255,9 @@ struct ChatMessageRow: View {
             switch block.kind {
             case .text:
                 if !block.content.isEmpty { parts.append(block.content) }
+            case .rootShellTool(let command):
+                let cmd = command.isEmpty ? block.toolDescription : command
+                parts.append("# \(cmd)")
             case .shellTool(let command):
                 let cmd = command.isEmpty ? block.toolDescription : command
                 var s = "$ \(cmd)"
