@@ -42,7 +42,7 @@ final class JailbreakConfigStore: ObservableObject {
     private static let kcService = "com.zzuu.zero.jailbreak-ssh"
 
     func setPassword(_ password: String) {
-        SecItemDelete(Self.query())
+        SecItemDelete(Self.query() as CFDictionary)
         var attrs = Self.query()
         attrs[kSecValueData as String] = Data(password.utf8)
         SecItemAdd(attrs as CFDictionary, nil)
@@ -58,7 +58,7 @@ final class JailbreakConfigStore: ObservableObject {
         return String(data: data, encoding: .utf8)
     }
 
-    func clearPassword() { SecItemDelete(Self.query()) }
+    func clearPassword() { SecItemDelete(Self.query() as CFDictionary) }
 
     private static func query() -> [String: Any] {
         [
@@ -102,14 +102,12 @@ enum JailbreakRunner {
                 }
             }
             DispatchQueue.global(qos: .userInitiated).async {
+                // `result` is non-optional (ISHShellCompletionCallback passes
+                // a concrete ISHShellExecutionResult); combine outputs safely.
                 let pid = ISHShellExecutor.executeCommand(command, lineCallback: nil, completion: { result in
-                    if let result {
-                        finish(Result(
-                            output: ((result.output ?? "") + (result.errorOutput ?? "")),
-                            exitCode: Int(result.exitCode)))
-                    } else {
-                        finish(nil)
-                    }
+                    finish(Result(
+                        output: result.output + (result.errorOutput ?? ""),
+                        exitCode: Int(result.exitCode)))
                 })
                 if pid < 0 { finish(nil) }
             }

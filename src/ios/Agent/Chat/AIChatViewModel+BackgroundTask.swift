@@ -396,6 +396,7 @@ extension AIChatViewModel {
         case .text: toolName = "text"
         case .thinking: toolName = "thinking"
         case .shellTool: toolName = "shell"
+        case .rootShellTool: toolName = "root_execute"
         case .fileReadTool: toolName = "file_read"
         case .fileWriteTool: toolName = "file_write"
         case .fileEditTool: toolName = "file_edit"
