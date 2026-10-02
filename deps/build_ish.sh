@@ -231,9 +231,17 @@ build_ish() {
     log_info "Building with ninja..."
     ninja -C "$BUILD_DIR" libish.a libish_emu.a libfakefs.a
 
-    # Also build VDSO (arm64 guest VDSO is at vdso/arm64/libvdso.so.elf)
+    # Build VDSO (arm64 guest VDSO is at vdso/arm64/libvdso.so.elf)
+    # Requires lld on PATH (fuse-ld=lld). Homebrew llvm is keg-only, so
+    # export it here for this step; failures are non-fatal (VDSO is optional,
+    # the app ships a fallback at vdso/libvdso.so.elf).
     log_info "Building VDSO..."
-    ninja -C "$BUILD_DIR" vdso/arm64/libvdso.so.elf || log_warning "VDSO build failed (may need LLVM)"
+    LLVM_BIN="$(brew --prefix llvm 2>/dev/null)/bin"
+    if [ -d "$LLVM_BIN" ]; then
+        PATH="$LLVM_BIN:$PATH" ninja -C "$BUILD_DIR" vdso/arm64/libvdso.so.elf || log_warning "VDSO build failed (non-fatal, app ships fallback VDSO)"
+    else
+        ninja -C "$BUILD_DIR" vdso/arm64/libvdso.so.elf || log_warning "VDSO build failed (non-fatal, app ships fallback VDSO)"
+    fi
 
     cd "$SCRIPT_DIR"
     log_success "iSH libraries built successfully"
