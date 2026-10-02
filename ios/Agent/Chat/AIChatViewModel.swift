@@ -2356,6 +2356,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge.\n"
             + (JailbreakConfigStore.shared.isConfigured
                ? "- root_execute: Execute a command as root on the jailbroken iOS HOST device (outside the Linux sandbox) via local SSH. Use it for host-level work: frida, dumping decrypted binaries, class-dump, apt packages, system logs. The sandbox (shell_execute) and the host are separate filesystems.\n"
+               + "- apps_open: Launch an installed app on the host by bundle id.\n"
+               + "- container_read / container_write_text: Read / write files inside an app's data container (bundle_id + relative_path; no UUID needed). Write is privileged — only when the user asked.\n"
                : "")
             + "\n"
             + "Current time (approximate): \(approximateTimeString) (\(TimeZone.current.identifier)). "
