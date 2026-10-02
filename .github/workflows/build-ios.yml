@@ -27,11 +27,11 @@ jobs:
 
       - name: Install Homebrew deps
         run: |
-          brew install ninja llvm libarchive pkg-config || true
-          # lld must be resolvable by name for iSH's -fuse-ld=lld (VDSO link
-          # command). Homebrew llvm is keg-only — symlink lld into
-          # /usr/local/bin so every subprocess (incl. ninja internals) finds it.
-          LLDBIN="$(brew --prefix llvm)/bin"
+          brew install ninja llvm libarchive pkg-config lld || true
+          # Homebrew split lld into its own formula (llvm no longer ships it).
+          # Symlink into /usr/local/bin so -fuse-ld resolves by name everywhere.
+          LLDBIN="$(brew --prefix lld 2>/dev/null)/bin"
+          [ -d "$LLDBIN" ] || LLDBIN="$(brew --prefix llvm)/bin"
           sudo ln -sf "$LLDBIN/lld" /usr/local/bin/lld
           sudo ln -sf "$LLDBIN/ld.lld" /usr/local/bin/ld.lld
           sudo ln -sf "$LLDBIN/ld64.lld" /usr/local/bin/ld64.lld
@@ -72,7 +72,7 @@ jobs:
           # resolving lld by name, which fails when Homebrew llvm is keg-only
           # (clang's lookup skips /usr/local/bin). Replace with the absolute
           # path — clang's -fuse-ld= accepts one.
-          sed -i '' "s|'-fuse-ld=lld'|'-fuse-ld=$(brew --prefix llvm)/bin/ld.lld'|" deps/ish/vdso/arm64/meson.build
+          sed -i '' "s|'-fuse-ld=lld'|'-fuse-ld=$(brew --prefix lld 2>/dev/null)/bin/ld.lld'|" deps/ish/vdso/arm64/meson.build
           grep -n "fuse-ld" deps/ish/vdso/arm64/meson.build
           ./deps/build_ish.sh
 
