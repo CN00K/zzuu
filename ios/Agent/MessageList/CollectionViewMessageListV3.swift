@@ -309,6 +309,7 @@ private struct BridgedAssistantBlockV3: View {
         case .text: return "assistantTextBlock"
         case .thinking: return "assistantThinkingBlock"
         case .shellTool: return "assistantShellBlock"
+        case .rootShellTool: return "assistantRootShellBlock"
         case .fileReadTool: return "assistantFileReadBlock"
         case .fileWriteTool: return "assistantFileWriteBlock"
         case .fileEditTool: return "assistantFileEditBlock"
@@ -3589,6 +3590,7 @@ extension CollectionViewMessageListV3 {
                        block.toolUseId != nil {
                         let toolName: String = switch block.kind {
                         case .shellTool: "shell_execute"
+                        case .rootShellTool: "root_execute"
                         case .fileReadTool: "file_read"
                         case .fileWriteTool: "file_write"
                         case .fileEditTool: "file_edit"

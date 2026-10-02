@@ -5416,6 +5416,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 case .text: return "text"
                 case .thinking: return "thinking"
                 case .shellTool: return "shellTool"
+                case .rootShellTool: return "rootShellTool"
                 case .fileReadTool: return "fileRead"
                 case .fileWriteTool: return "fileWrite"
                 case .fileEditTool: return "fileEdit"

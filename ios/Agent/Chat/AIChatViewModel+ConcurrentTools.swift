@@ -419,7 +419,7 @@ extension AIChatViewModel {
                 // Resolve container UUID from the bundle id via the metadata
                 // plist; single root_execute round trip: lookup + read.
                 let script = """
-                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(rBid)' {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(rBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
                 [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
                 sed -n '\(rOffset),\(rOffset + rLines)p' "$uuid/\(rPath)" 2>/dev/null | head -c 15000
                 """
@@ -466,7 +466,7 @@ extension AIChatViewModel {
                     ? ""
                     : "[ -f \"$uuid/\(wPath)\" ] && { echo EXISTS; exit 0; }" + "\n                "
                 let script = """
-                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(wBid)' {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(wBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
                 [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
                 mkdir -p "$uuid/$(dirname '\(wPath)')" 2>/dev/null
                 \(existsGuard)echo \(b64) | base64 -d \(redirect) "$uuid/\(wPath)" && echo WRITE_OK

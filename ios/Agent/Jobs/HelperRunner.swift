@@ -983,6 +983,7 @@ extension AIChatViewModel {
             for block in msg.blocks where block.toolStatus != nil {
                 let name: String = switch block.kind {
                 case .shellTool: "shell_execute"
+                case .rootShellTool: "root_execute"
                 case .fileReadTool: "file_read"
                 case .fileWriteTool: "file_write"
                 case .fileEditTool: "file_edit"
