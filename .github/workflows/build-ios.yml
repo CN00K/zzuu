@@ -67,7 +67,14 @@ jobs:
         run: ./deps/build_ffmpeg.sh
 
       - name: Build iSH
-        run: ./deps/build_ish.sh
+        run: |
+          # Patch the upstream VDSO meson rule: -fuse-ld=lld relies on clang
+          # resolving lld by name, which fails when Homebrew llvm is keg-only
+          # (clang's lookup skips /usr/local/bin). Replace with the absolute
+          # path — clang's -fuse-ld= accepts one.
+          sed -i '' "s|'-fuse-ld=lld'|'-fuse-ld=$(brew --prefix llvm)/bin/ld.lld'|" deps/ish/vdso/arm64/meson.build
+          grep -n "fuse-ld" deps/ish/vdso/arm64/meson.build
+          ./deps/build_ish.sh
 
       - name: Prepare Alpine rootfs
         run: ./deps/prepare_alpine_rootfs.sh
