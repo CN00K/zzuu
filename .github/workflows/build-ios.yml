@@ -26,7 +26,11 @@ jobs:
           sw_vers
 
       - name: Install Homebrew deps
-        run: brew install ninja llvm libarchive pkg-config || true
+        run: |
+          brew install ninja llvm libarchive pkg-config || true
+          # lld must be on PATH for iSH's -fuse-ld=lld (Homebrew llvm is keg-only)
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+          ls "$(brew --prefix llvm)/bin" | grep -i "ld" | head -5
 
       - name: Install Meson
         run: |
