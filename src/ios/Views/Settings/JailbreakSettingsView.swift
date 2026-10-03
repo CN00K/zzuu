@@ -135,6 +135,16 @@ enum JBLinker {
                               encoding: .utf8)!
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // First-run toolchain: the rootfs ships without an SSH client. Install
+        // openssh-client (provides ssh-keygen AND ssh) before any step that
+        // needs it - the old code relied on it being present and every Link
+        // attempt failed silently.
+        let deps = try await JailbreakRunner.run(
+            "which ssh-keygen >/dev/null 2>&1 && echo DEPS_OK || apk add --no-cache openssh-client >/dev/null 2>&1 && echo DEPS_OK")
+        if !deps.output.contains("DEPS_OK") {
+            throw NSError(domain: "zzuu.jb", code: -5,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client in the sandbox. Output: \(deps.output.suffix(200))"])
+        }
         let gen = try await JailbreakRunner.run(
             "ssh-keygen -t ed25519 -N '' -f \(priv.path) -C zzuu-jb -q")
         if gen.exitCode != 0 {
@@ -165,11 +175,16 @@ enum JBLinker {
             let pub = try await ensureKey()
             JailbreakConfigStore.shared.setPassword(password)
 
-            let probe = try await JailbreakRunner.run(
-                "nc -z -w 5 \(host) \(port) && echo PORT_OK || echo PORT_FAIL")
+            // netcat lives in a separate package; fall back to an ssh probe
+            // (Permission denied / password prompt = port reachable).
+            let probeCmd = """
+            command -v nc >/dev/null 2>&1 && { nc -z -w 5 \(host) \(port) && echo PORT_OK || echo PORT_FAIL; } || \
+            { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p \(port) \(user)@\(host) 'echo PROBE' 2>&1 | grep -qE "PROBE|Permission denied|password" && echo PORT_OK || echo PORT_FAIL; }
+            """
+            let probe = try await JailbreakRunner.run(probeCmd)
             if !probe.output.contains("PORT_OK") {
                 return Outcome(ok: false,
-                               message: "Cannot reach \(host):\(port) from the sandbox. Check host/port and that OpenSSH is running on the device.")
+                               message: "Cannot reach \(host):\(port) from the sandbox. Check host/port and that OpenSSH is running on the device. Output: \(probe.output.suffix(150))")
             }
 
             let pwFile = "/tmp/.zzuu_jb_pw"
@@ -195,6 +210,7 @@ enum JBLinker {
 
             let install = try await JailbreakRunner.run(
                 "apk add --no-cache expect >/dev/null 2>&1 || true\n"
+                + "command -v expect >/dev/null 2>&1 || { echo EXPECT_MISSING; exit 0; }\n"
                 + "expect \(scriptPath); rc=$?; rm -f \(scriptPath) \(pwFile); exit $rc")
             if install.exitCode != 0 || !install.output.contains("KEY_INSTALLED") {
                 return Outcome(ok: false,
