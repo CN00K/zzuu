@@ -58,7 +58,7 @@ enum HIDBridge {
         case "double_tap": inj.doubleTap(at: CGPoint(x: x, y: y))
         case "long_press": inj.longPress(at: CGPoint(x: x, y: y), duration: duration)
         case "swipe":      inj.swipe(from: CGPoint(x: x, y: y), to: CGPoint(x: x2, y: y2), duration: duration)
-        case "pinch":      inj.pinch(in: CGRect(x: x - 80, y: y - 80, width: 160, height: 160),
+        case "pinch":      inj.pinch(inBounds: CGRect(x: x - 80, y: y - 80, width: 160, height: 160),
                                      scale: scale, angle: 0, duration: duration)
         case "home":       inj.pressHomeButton()
         case "type_text":  inj.typeText(text)
