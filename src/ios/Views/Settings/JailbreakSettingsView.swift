@@ -118,118 +118,33 @@ struct JailbreakSettingsView: View {
 enum JBLinker {
     struct Outcome { let ok: Bool; let message: String }
 
-    static let jbKeyPath = "~/.ssh/id_ed25519_jb"
+    static let jbKeyPath = "/root/.ssh/id_ed25519_jb"
 
     static func sshBase(port: Int) -> String {
         "-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
         + "-o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15 -p \(port)"
     }
 
+        /// Ensure key in iSH sandbox /root/.ssh/ (NOT iOS filesystem).
     static func ensureKey() async throws -> String {
-        let dir = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                              ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!).appendingPathComponent(".ssh")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let priv = dir.appendingPathComponent("id_ed25519_jb")
-        if FileManager.default.fileExists(atPath: priv.path) {
-            return try String(data: Data(contentsOf: dir.appendingPathComponent("id_ed25519_jb.pub")),
-                              encoding: .utf8)!
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // First-run toolchain: the rootfs ships without an SSH client. Install
-        // openssh-client (provides ssh-keygen AND ssh) before any step that
-        // needs it - the old code relied on it being present and every Link
-        // attempt failed silently.
         let deps = try await JailbreakRunner.run(
             "which ssh-keygen >/dev/null 2>&1 && echo DEPS_OK || apk add --no-cache openssh-client >/dev/null 2>&1 && echo DEPS_OK")
-        if !deps.output.contains("DEPS_OK") {
+        guard deps.output.contains("DEPS_OK") else {
             throw NSError(domain: "zzuu.jb", code: -5,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client in the sandbox. Output: \(deps.output.suffix(200))"])
+                userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client. \(deps.output.suffix(200))"])
         }
-        // -N '' loses its quoting through the exec layer (empty arg becomes
-        // nothing, -N then swallows -f -> "Too many arguments"). Wrap in sh -c
-        // so the empty-password quotes survive intact.
         let gen = try await JailbreakRunner.run(
-            "/bin/sh -c \"ssh-keygen -t ed25519 -N '' -f '\(priv.path)' -C zzuu-jb -q\"")
-        if gen.exitCode != 0 {
+            "/bin/sh -c \"mkdir -p /root/.ssh && ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519_jb -C zzuu-jb -q\"")
+        guard gen.exitCode == 0 else {
             throw NSError(domain: "zzuu.jb", code: -3,
-                          userInfo: [NSLocalizedDescriptionKey: "ssh-keygen failed: \(gen.output)"])
+                userInfo: [NSLocalizedDescriptionKey: "ssh-keygen failed: \(gen.output)"])
         }
-        return try String(data: Data(contentsOf: dir.appendingPathComponent("id_ed25519_jb.pub")),
-                          encoding: .utf8)!
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let read = try await JailbreakRunner.run("cat /root/.ssh/id_ed25519_jb.pub")
+        guard read.exitCode == 0 else {
+            throw NSError(domain: "zzuu.jb", code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot read pubkey: \(read.output)"])
+        }
+        return read.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func test(host: String, port: Int, user: String) async -> Outcome {
-        do {
-            let _ = try await ensureKey()
-            let r = try await JailbreakRunner.run(
-                "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo OK $(uname -a | cut -c1-40)'")
-            if r.output.contains("OK") {
-                return Outcome(ok: true, message: r.output.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-            return Outcome(ok: false, message: String(r.output.trimmingCharacters(in: .whitespacesAndNewlines).suffix(200)))
-        } catch {
-            return Outcome(ok: false, message: error.localizedDescription)
-        }
-    }
 
-    static func link(host: String, port: Int, user: String, password: String) async -> Outcome {
-        do {
-            let pub = try await ensureKey()
-            JailbreakConfigStore.shared.setPassword(password)
-
-            // netcat lives in a separate package; fall back to an ssh probe
-            // (Permission denied / password prompt = port reachable).
-            let probeCmd = """
-            command -v nc >/dev/null 2>&1 && { nc -z -w 5 \(host) \(port) && echo PORT_OK || echo PORT_FAIL; } || \
-            { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p \(port) \(user)@\(host) 'echo PROBE' 2>&1 | grep -qE "PROBE|Permission denied|password" && echo PORT_OK || echo PORT_FAIL; }
-            """
-            let probe = try await JailbreakRunner.run(probeCmd)
-            if !probe.output.contains("PORT_OK") {
-                return Outcome(ok: false,
-                               message: "Cannot reach \(host):\(port) from the sandbox. Check host/port and that OpenSSH is running on the device. Output: \(probe.output.suffix(150))")
-            }
-
-            let pwFile = "/tmp/.zzuu_jb_pw"
-            try Data(password.utf8).write(to: URL(fileURLWithPath: pwFile), options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: pwFile)
-
-            let expectScript = """
-            #!/usr/bin/expect -f
-            set timeout 30
-            set pw [read [open /tmp/.zzuu_jb_pw r]]
-            set pw [string trim $pw]
-            spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p \(port) \(user)@\(host) "mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF '\(pub)' ~/.ssh/authorized_keys 2>/dev/null || echo '\(pub)' >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED"
-            expect {
-                -re "(?i)password:" { send "$pw\\r"; exp_continue }
-                "KEY_INSTALLED" { exit 0 }
-                timeout { exit 124 }
-                eof { exit 0 }
-            }
-            """
-            let scriptPath = "/tmp/.zzuu_jb_link.exp"
-            try expectScript.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptPath)
-
-            let install = try await JailbreakRunner.run(
-                "apk add --no-cache expect >/dev/null 2>&1 || true\n"
-                + "command -v expect >/dev/null 2>&1 || { echo EXPECT_MISSING; exit 0; }\n"
-                + "expect \(scriptPath); rc=$?; rm -f \(scriptPath) \(pwFile); exit $rc")
-            if install.exitCode != 0 || !install.output.contains("KEY_INSTALLED") {
-                return Outcome(ok: false,
-                               message: "Password authentication failed or timed out. Output: \(install.output.suffix(300))")
-            }
-
-            let verify = try await JailbreakRunner.run(
-                "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo ZZUU_KEY_OK'")
-            if verify.output.contains("ZZUU_KEY_OK") {
-                JailbreakConfigStore.shared.linked = true
-                return Outcome(ok: true, message: "Linked. root_execute is now available — key-based auth verified.")
-            }
-            return Outcome(ok: false,
-                           message: "Pubkey installed but key auth verification failed: \(verify.output.suffix(300))")
-        } catch {
-            return Outcome(ok: false, message: "Link error: \(error.localizedDescription)")
-        }
-    }
-}
