@@ -1360,7 +1360,6 @@
 		D37C8682B62105DCA80527AB /* JBTools */ = {
 			isa = PBXGroup;
 			children = (
-				D37C8682B62105DCA80527AB /* JBTools */,
 				B58E84FD6A99235AB27996D4 /* HIDTouchInjector.h */,
 				17FF33BC79DA8C44BADA9351 /* HIDTouchInjector.mm */,
 				4F92E70B66F3475A1C0A0FCD /* UIDumpInjector.h */,
@@ -1548,6 +1547,7 @@
 		E51000031 /* Minis */ = {
 			isa = PBXGroup;
 			children = (
+				D37C8682B62105DCA80527AB /* JBTools */,
 				E51000011 /* MinisApp.swift */,
 				E5QA0102 /* AppDelegate.swift */,
 				E5E000018 /* Minis.entitlements */,
