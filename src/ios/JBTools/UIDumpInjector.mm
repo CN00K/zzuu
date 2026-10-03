@@ -5,7 +5,7 @@
 
 static NSDictionary *DictFromView(UIView *v, NSInteger depth, NSInteger maxDepth);
 
-static NSDictionary *ElementDict(id<UIAccessibilityIdentification> element,
+static NSMutableDictionary *ElementDict(id<UIAccessibilityIdentification> element,
                                  CGRect frame, NSString *cls) {
     NSString *label = nil, *ident = nil;
     if ([element respondsToSelector:@selector(accessibilityLabel)])
@@ -27,7 +27,7 @@ static NSDictionary *ElementDict(id<UIAccessibilityIdentification> element,
 
 static NSDictionary *DictFromView(UIView *v, NSInteger depth, NSInteger maxDepth) {
     @autoreleasepool {
-        NSMutableDictionary *d = ElementDict(v, v.frame, NSStringFromClass([v class]));
+        NSMutableDictionary *d = (NSMutableDictionary *)ElementDict(v, v.frame, NSStringFromClass([v class]));
         d[@"frame"] = @{@"x": @(v.frame.origin.x), @"y": @(v.frame.origin.y),
                         @"w": @(v.frame.size.width), @"h": @(v.frame.size.height)};
         if (v.hidden) d[@"hidden"] = @YES;

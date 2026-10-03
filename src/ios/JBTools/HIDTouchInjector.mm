@@ -19,6 +19,13 @@ typedef mach_port_t IOHIDEventSystemClientRef;
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef CGFloat IOHIDFloat;
 
+// Some SDKs / toolchains used in CI may not expose IOOptionBits.
+// Provide a local definition for compatibility (uint32_t historically).
+#include <stdint.h>
+#ifndef IOOptionBits
+typedef uint32_t IOOptionBits;
+#endif
+
 enum {
     kIOHIDDigitizerTransducerTypeHand = 3,
     kIOHIDDigitizerTransducerTypeFinger = 2,
