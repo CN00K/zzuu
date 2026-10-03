@@ -12765,6 +12765,6 @@ Require v2/v3 verification, valid DEX headers, a clean ZIP, three cold launches,
 
 Do not claim completion from a successful install. Completion requires the build manifest, hash-matched plan inputs, signing evidence, static checks, device logs, UI evidence, and at least one normal user route through the recovered app.
 
-"""
-    }
+""",
+    ]
 }
