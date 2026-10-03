@@ -163,11 +163,28 @@ enum JBLinker {
 
             // Probe reachability with ssh (nc/netcat may not exist in rootfs;
             // ssh is reliable once openssh-client is installed).
-            let probe = try await JailbreakRunner.run(
+            // Probe: try BatchMode first (works if a key is already installed);
+            // if that fails, try with password auth (sshpass) — the key isn't
+            // installed yet on first Link, so password auth is the only way in.
+            let probeBM = try await JailbreakRunner.run(
                 "ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -p \(port) \(user)@\(host) 'echo PORT_OK' 2>&1 || echo PORT_FAIL")
-            guard probe.output.contains("PORT_OK") else {
-                return Outcome(ok: false,
-                    message: "Cannot reach \(host):\(port). Check host/port and that OpenSSH is running on the device. Output: \(probe.output.suffix(180))")
+            if !probeBM.output.contains("PORT_OK") {
+                // BatchMode failed — expected on first Link. Probe with password.
+                let instSP = try await JailbreakRunner.run(
+                    "which sshpass >/dev/null 2>&1 && echo SP_OK || apk add --no-cache sshpass >/dev/null 2>&1 && echo SP_OK")
+                guard instSP.output.contains("SP_OK") else {
+                    return Outcome(ok: false,
+                        message: "Failed to install sshpass in the sandbox. Output: \(instSP.output.suffix(180))")
+                }
+                let probePW = try await JailbreakRunner.run(
+                    "/bin/sh -c \"sshpass -p '\(password)' ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) 'echo PORT_OK'\" 2>&1 || echo PORT_FAIL")
+                guard probePW.output.contains("PORT_OK") else {
+                    let detail = probePW.output.contains("Permission denied")
+                        ? "Password rejected by sshd. Check the SSH password (default is usually 'alpine')."
+                        : probePW.output.suffix(180)
+                    return Outcome(ok: false,
+                        message: "Cannot authenticate to \(host):\(port). \(detail)")
+                }
             }
 
             // Push the pubkey using sshpass (already in rootfs; avoids the
@@ -185,7 +202,7 @@ enum JBLinker {
                 return Outcome(ok: false, message: "Failed to stage pubkey: \(write.output.suffix(180))")
             }
             let push = try await JailbreakRunner.run(
-                "/bin/sh -c \"sshpass -p '\(password)' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p \(port) \(user)@\(host) 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF \"$(cat /tmp/.zzuu_jb_pub)\" ~/.ssh/authorized_keys 2>/dev/null || cat /tmp/.zzuu_jb_pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED'\"")
+                "/bin/sh -c \"sshpass -p '\(password)' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF \"$(cat /tmp/.zzuu_jb_pub)\" ~/.ssh/authorized_keys 2>/dev/null || cat /tmp/.zzuu_jb_pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED'\"")
             guard push.output.contains("KEY_INSTALLED") else {
                 return Outcome(ok: false,
                     message: "Key push failed. Check the password. Output: \(push.output.suffix(220))")
