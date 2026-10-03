@@ -686,7 +686,7 @@ extension AIChatViewModel {
             }
             do {
                 let script = """
-                CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(abBid)' {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(abBid)' {} \\; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
                 [ -z "$CONT" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
                 mkdir -p /var/mobile/zzuu_backups
                 case "\(abAction)" in
@@ -919,7 +919,7 @@ extension AIChatViewModel {
                 } else {
                     // Trim: keep the JSON payload only
                     var out = r.output
-                    if let jsonStart = out.range(of: "{"windows"") {
+                    if let jsonStart = out.range(of: "{\"windows\"") {
                         out = String(out[jsonStart.lowerBound...])
                     }
                     if out.count > 60_000 { out = String(out.prefix(60_000)) + "\n…[truncated]" }

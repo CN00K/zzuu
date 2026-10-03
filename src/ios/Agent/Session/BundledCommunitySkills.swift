@@ -9013,7 +9013,7 @@ The script intentionally refuses to proceed if it cannot find the fake LOAD or r
    - target pointer and size are often loaded through PC-relative `ldr` literals into `x2` and `x1`.
    - each `bl` after those loads applies XOR to a runtime range.
 6. Map target VAs through normal LOADs, not the fake one, then XOR file bytes.
-7. Carve embedded `ELF` blobs and inspect sections/PHDRs/UPX markers.
+7. Carve embedded `DEL-ELF` blobs and inspect sections/PHDRs/UPX markers.
 8. Validate runtime by string diff, embedded ELF parse, and dynamic dump comparison when possible.
 
 ## Dynamic confirmation procedure
