@@ -8,7 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
+#import <objc/runtime.h>\n#import <objc/message.h>
 #import "NativeOffloadUtils.h"
 #include "kernel/native_offload.h"
 #include <unistd.h>
@@ -62,11 +62,13 @@ static NSDictionary *get_installed_apps_data(void) {
         NSString *name = nil;
         NSString *type = nil;
         @try {
-            bid = [app valueForKey:@"applicationIdentifier"]
-               ?: [app valueForKey:@"bundleIdentifier"] ?: @"";
-            name = [app valueForKey:@"applicationDisplayName"]
-                ?: [app valueForKey:@"displayName"]
-                ?: [app valueForKey:@"localizedName"] ?: @"";
+            // LSApplicationProxy canonical accessors: bundleIdentifier /
+            // localizedName. Try KVC first, then direct msgSend fallback.
+            bid = [app valueForKey:@"bundleIdentifier"]
+               ?: [app valueForKey:@"applicationIdentifier"] ?: @"";
+            name = [app valueForKey:@"localizedName"]
+                ?: [app valueForKey:@"applicationDisplayName"]
+                ?: [app valueForKey:@"displayName"] ?: @"";
             type = [app valueForKey:@"applicationType"] ?: @"";
         } @catch (NSException *e) {
             continue;
