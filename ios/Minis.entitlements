@@ -56,10 +56,16 @@
 	<key>com.apple.springboard.opensensitiveurl</key>
 	<true/>
 
-	<!-- Data layer -->
+	<!-- Data layer.
+	     keychain-access-groups: the wildcard "*" is NOT a valid group name on
+	     iOS 18 — it invalidates the whole entitlement and SecItemAdd fails with
+	     errSecMissingEntitlement (-34018), which is the "API key won't save"
+	     bug. Use explicit group names: the application-group and the bundle-id
+	     prefix. TrollStore/CoreTrust accepts these. -->
 	<key>keychain-access-groups</key>
 	<array>
-		<string>*</string>
+		<string>group.com.zzuu.zero</string>
+		<string>com.zzuu.zero</string>
 	</array>
 	<key>com.apple.private.tcc.allow</key>
 	<array>
