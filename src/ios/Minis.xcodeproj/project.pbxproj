@@ -2789,9 +2789,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7457A9F16B499C67718E7D9B /* HIDTouchInjector.mm in Sources */,
-				276B57ACC501F5C8F3641878 /* UIDumpInjector.mm in Sources */,
-				9F382018E522E3BF28CDC2F4 /* HIDBridgeMain.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2828,6 +2825,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7457A9F16B499C67718E7D9B /* HIDTouchInjector.mm in Sources */,
+				276B57ACC501F5C8F3641878 /* UIDumpInjector.mm in Sources */,
+				9F382018E522E3BF28CDC2F4 /* HIDBridgeMain.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,
