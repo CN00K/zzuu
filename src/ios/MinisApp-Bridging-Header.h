@@ -62,8 +62,8 @@
 #import "JiebaWrapper.h"
 
 // [zzuu-jb] HID touch injection + UI tree dump (system-wide, any app)
-#import "HIDTouchInjector.h"
-#import "UIDumpInjector.h"
+#import "JBTools/HIDTouchInjector.h"
+#import "JBTools/UIDumpInjector.h"
 
 #endif /* MinisApp_Bridging_Header_h */
 
