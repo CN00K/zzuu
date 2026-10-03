@@ -98,6 +98,8 @@ struct JailbreakSettingsView: View {
 // MARK: - JBLinker
 //
 // Stateless runner so the settings screen doesn't need a chat view model.
+// Key push uses FILE PIPELINE only — the pubkey never appears in a command
+// line, so no quote-escaping layer can break it.
 enum JBLinker {
     struct Outcome { let ok: Bool; let message: String }
 
@@ -107,6 +109,17 @@ enum JBLinker {
         "-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
         + "-o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15 -p \(port)"
     }
+
+    /// sshpass wrapper: password auth, pubkey auth disabled (used before the
+    /// key is installed). Password goes via a 0600 file, never in argv.
+    static func pwSSHCmd(_ remote: String, port: Int, user: String, host: String) -> String {
+        "/bin/sh -c \"sshpass -f /tmp/.zzuu_jb_pw ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) '\(remote)'\""
+    }
+
+    /// Pipe-mode remote: reads the pubkey from stdin and appends it to
+    /// authorized_keys. Zero quotes around the key text — it travels via
+    /// stdin, so no escaping layer can break it.
+    static let pipingRemote = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo PUSH_OK"
 
     /// Ensure key in iSH sandbox /root/.ssh/ — all ops inside the sandbox.
     static func ensureKey() async throws -> String {
@@ -143,6 +156,18 @@ enum JBLinker {
         return read.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Stage the SSH password in a 0600 file inside the sandbox (for sshpass -f).
+    static func stagePassword(_ password: String) async throws {
+        // base64 so any password characters survive verbatim.
+        let b64 = Data(password.utf8).base64EncodedString()
+        let r = try await JailbreakRunner.run(
+            "echo \(b64) | base64 -d > /tmp/.zzuu_jb_pw && chmod 600 /tmp/.zzuu_jb_pw && echo PW_OK")
+        guard r.output.contains("PW_OK") else {
+            throw NSError(domain: "zzuu.jb", code: -6,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to stage password: \(r.output)"])
+        }
+    }
+
     static func test(host: String, port: Int, user: String) async -> Outcome {
         do {
             let _ = try await ensureKey()
@@ -160,54 +185,31 @@ enum JBLinker {
     static func link(host: String, port: Int, user: String, password: String) async -> Outcome {
         do {
             let pub = try await ensureKey()
+            try await stagePassword(password)
 
-            // Probe reachability with ssh (nc/netcat may not exist in rootfs;
-            // ssh is reliable once openssh-client is installed).
-            // Probe: try BatchMode first (works if a key is already installed);
-            // if that fails, try with password auth (sshpass) — the key isn't
-            // installed yet on first Link, so password auth is the only way in.
-            let probeBM = try await JailbreakRunner.run(
-                "ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -p \(port) \(user)@\(host) 'echo PORT_OK' 2>&1 || echo PORT_FAIL")
-            if !probeBM.output.contains("PORT_OK") {
-                // BatchMode failed — expected on first Link. Probe with password.
-                let instSP = try await JailbreakRunner.run(
-                    "which sshpass >/dev/null 2>&1 && echo SP_OK || apk add --no-cache sshpass >/dev/null 2>&1 && echo SP_OK")
-                guard instSP.output.contains("SP_OK") else {
-                    return Outcome(ok: false,
-                        message: "Failed to install sshpass in the sandbox. Output: \(instSP.output.suffix(180))")
-                }
-                let probePW = try await JailbreakRunner.run(
-                    "/bin/sh -c \"sshpass -p '\(password)' ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) 'echo PORT_OK'\" 2>&1 || echo PORT_FAIL")
-                guard probePW.output.contains("PORT_OK") else {
-                    let detail = probePW.output.contains("Permission denied")
-                        ? "Password rejected by sshd. Check the SSH password (default is usually 'alpine')."
-                        : probePW.output.suffix(180)
-                    return Outcome(ok: false,
-                        message: "Cannot authenticate to \(host):\(port). \(detail)")
-                }
-            }
-
-            // Push the pubkey using sshpass (already in rootfs; avoids the
-            // expect dependency entirely).
-            let inst = try await JailbreakRunner.run(
-                "which sshpass >/dev/null 2>&1 && echo SP_OK || apk add --no-cache sshpass >/dev/null 2>&1 && echo SP_OK")
-            guard inst.output.contains("SP_OK") else {
+            // 1) Probe with password auth (key not installed yet on first Link).
+            let probe = try await JailbreakRunner.run(pwSSHCmd(
+                "echo PORT_OK", port: port, user: user, host: host) + " 2>&1 || echo PORT_FAIL")
+            guard probe.output.contains("PORT_OK") else {
+                let denied = probe.output.contains("Permission denied")
                 return Outcome(ok: false,
-                    message: "Failed to install sshpass in the sandbox. Output: \(inst.output.suffix(180))")
+                    message: denied
+                        ? "Password rejected by sshd. Check the SSH password on the device (default is usually 'alpine'; the user's terminal password may differ)."
+                        : "Cannot reach \(host):\(port). \(probe.output.suffix(180))")
             }
-            // Write the pubkey into the sandbox /tmp, then pipe it over ssh.
-            let write = try await JailbreakRunner.run(
-                "cat > /tmp/.zzuu_jb_pub << 'ZZEOF'\n\(pub)\nZZEOF\necho PUB_SAVED")
-            guard write.output.contains("PUB_SAVED") else {
-                return Outcome(ok: false, message: "Failed to stage pubkey: \(write.output.suffix(180))")
-            }
+
+            // 2) Push the pubkey: pipe the sandbox file over ssh stdin — the
+            //    key text never appears in any command line, so no quoting
+            //    layer can break it.
             let push = try await JailbreakRunner.run(
-                "/bin/sh -c \"sshpass -p '\(password)' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF \"$(cat /tmp/.zzuu_jb_pub)\" ~/.ssh/authorized_keys 2>/dev/null || cat /tmp/.zzuu_jb_pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED'\"")
-            guard push.output.contains("KEY_INSTALLED") else {
+                "/bin/sh -c \"cat /root/.ssh/id_ed25519_jb.pub | \(pwSSHCmd pipingRemote, port: port, user: user, host: host)\" 2>&1 || echo PUSH_FAIL"
+            )
+            guard push.output.contains("PUSH_OK") else {
                 return Outcome(ok: false,
-                    message: "Key push failed. Check the password. Output: \(push.output.suffix(220))")
+                    message: "Key push failed. \(push.output.suffix(220))")
             }
-            // Verify key-only auth works.
+
+            // 3) Verify key-only auth works.
             let verify = try await JailbreakRunner.run(
                 "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo ZZUU_KEY_OK'")
             guard verify.output.contains("ZZUU_KEY_OK") else {
