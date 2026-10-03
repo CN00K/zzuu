@@ -102,6 +102,19 @@ enum JailbreakRunner {
                 }
             }
             DispatchQueue.global(qos: .userInitiated).async {
+                // The kernel boots lazily from the chat screen; the settings
+                // page never triggers it. Boot on demand here, or executeCommand
+                // returns a negative pid ("sandbox process creation failed").
+                if !ISHKernel.shared.isBooted {
+                    do { try RootfsManager.shared.installIfNeeded() } catch { /* already installed */ }
+                    let rootPath = RootfsManager.shared.rootfsPath.path
+                    let err = ISHKernel.shared.boot(withRootPath: rootPath)
+                    if err < 0 {
+                        finish(nil)
+                        return
+                    }
+                    MinisFsRouter.shared.installHook()
+                }
                 // `result` is non-optional (ISHShellCompletionCallback passes
                 // a concrete ISHShellExecutionResult); combine outputs safely.
                 let pid = ISHShellExecutor.executeCommand(command, lineCallback: nil, completion: { result in
