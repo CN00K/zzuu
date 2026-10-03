@@ -5,5 +5,15 @@
 //  for every UIWindow / UIView / accessibility element.
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern NSString * _Nullable zzuuDumpUITreeJSON(NSInteger maxDepth);
+
+#ifdef __cplusplus
+}
+#endif
+
 NS_ASSUME_NONNULL_END
