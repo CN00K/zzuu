@@ -202,7 +202,7 @@ enum JBLinker {
             //    key text never appears in any command line, so no quoting
             //    layer can break it.
             let push = try await JailbreakRunner.run(
-                "/bin/sh -c \"cat /root/.ssh/id_ed25519_jb.pub | \(pwSSHCmd pipingRemote, port: port, user: user, host: host)\" 2>&1 || echo PUSH_FAIL"
+                "/bin/sh -c \"cat /root/.ssh/id_ed25519_jb.pub | \(pwSSHCmd(pipingRemote, port: port, user: user, host: host))\" 2>&1 || echo PUSH_FAIL"
             )
             guard push.output.contains("PUSH_OK") else {
                 return Outcome(ok: false,
