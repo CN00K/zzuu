@@ -8257,6 +8257,19 @@ private struct SettingsSheet: View {
                         }
                     }
                     NavigationLink {
+                        REWorkbenchView()
+                    } label: {
+                        Label {
+                            Text("RE Workbench")
+                        } icon: {
+                            Image(systemName: "hammer")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.orange, in: Circle())
+                        }
+                    }
+                    NavigationLink {
                         JailbreakSettingsView()
                     } label: {
                         Label {
