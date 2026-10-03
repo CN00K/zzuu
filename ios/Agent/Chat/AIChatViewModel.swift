@@ -2359,6 +2359,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                + "- apps_open: Launch an installed app on the host by bundle id.\n"
                + "- container_read / container_write_text: Read / write files inside an app's data container (bundle_id + relative_path; no UUID needed). Write is privileged — only when the user asked.\n"
                + "- decrypted_list / process_list / dylib_inject: decrypted-app listing, running-process list, dylib injection into an app binary (privileged).\n"
+               + "- frida_control / keychain_dump / syslog_stream / app_backup: frida-server control, keychain extraction, system log reading, app data backup (privileged).\n"
+               + "- resign_ipa / macho_info / class_dump / theos_build: re-sign binaries, Mach-O analysis, ObjC header generation, Theos tweak build via CI.\n"
                : "")
             + "\n"
             + "Current time (approximate): \(approximateTimeString) (\(TimeZone.current.identifier)). "

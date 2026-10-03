@@ -588,6 +588,255 @@ extension AIChatViewModel {
                 toolSuccess = false
             }
             break
+        case "frida_control":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let fcAction = (toolArgs["action"] as? String) ?? "status"
+            do {
+                let cmd: String
+                switch fcAction {
+                case "start":
+                    cmd = "pkill frida-server 2>/dev/null; FS=$(ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null | head -1); [ -z \"$FS\" ] && { echo FRIDA_MISSING; exit 0; }; nohup $FS -l 0.0.0.0:27042 >/tmp/frida.log 2>&1 & sleep 1; pgrep frida-server && echo STARTED"
+                case "stop":
+                    cmd = "pkill frida-server 2>/dev/null; echo STOPPED"
+                case "ps":
+                    cmd = "frida-ps -U 2>/dev/null | head -30 || ps aux | head -30"
+                case "apps":
+                    cmd = "lsappinfo list 2>/dev/null | grep -B2 bundle | head -40 || ps aux | grep -i mobile | head -30"
+                default:
+                    cmd = "pgrep frida-server >/dev/null && echo RUNNING || echo NOT_RUNNING; ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null"
+                }
+                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
+                toolOutput = r.output.isEmpty ? "(no output)" : r.output
+                toolSuccess = !r.output.contains("FRIDA_MISSING")
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "keychain_dump":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let kdKeyword = (toolArgs["keyword"] as? String) ?? ""
+            do {
+                let cmd = """
+                which keychaineditor >/dev/null 2>&1 && echo HAVE_KE || echo NO_KE
+                """
+                let ke = try await executeRootCommand(cmd, timeout: 30) { _ in }
+                var dumpOut = ""
+                if ke.output.contains("HAVE_KE") {
+                    let r = try await executeRootCommand(
+                        kdKeyword.isEmpty
+                            ? "keychaineditor dump 2>&1 | head -60"
+                            : "keychaineditor dump 2>&1 | grep -i '\(kdKeyword)' | head -40",
+                        timeout: 60) { _ in }
+                    dumpOut = r.output
+                } else {
+                    // fallback: sqlite direct read of the keychain db (metadata only)
+                    let r = try await executeRootCommand(
+                        "cp /var/Keychains/keychain-2.db /tmp/kc.db 2>/dev/null && sqlite3 /tmp/kc.db \"SELECT agrp, svce, acct FROM genp LIMIT 40;\" 2>/dev/null || echo KEYCHAIN_READ_FAILED",
+                        timeout: 30) { _ in }
+                    dumpOut = r.output
+                }
+                toolOutput = dumpOut.isEmpty ? "(no keychain items found)" : dumpOut
+                toolSuccess = !dumpOut.contains("KEYCHAIN_READ_FAILED")
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "syslog_stream":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let slProc = (toolArgs["process"] as? String) ?? ""
+            let slLines = (toolArgs["lines"] as? NSNumber)?.intValue ?? 100
+            do {
+                let pred = slProc.isEmpty ? "" : " --predicate 'process == \"\(slProc)\"'"
+                let r = try await executeRootCommand(
+                    "log show --last 5m\(pred) 2>/dev/null | tail -\(slLines) || tail -\(slLines) /var/log/syslog 2>/dev/null || echo LOG_READ_FAILED",
+                    timeout: 60) { _ in }
+                toolOutput = r.output.isEmpty ? "(no log output)" : r.output
+                toolSuccess = !r.output.contains("LOG_READ_FAILED")
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "app_backup":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let abBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let abAction = (toolArgs["action"] as? String) ?? "backup"
+            guard !abBid.isEmpty else {
+                toolOutput = "Error: Missing required 'bundle_id'."
+                toolSuccess = false
+                break
+            }
+            do {
+                let script = """
+                CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(abBid)' {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+                [ -z "$CONT" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
+                mkdir -p /var/mobile/zzuu_backups
+                case "\(abAction)" in
+                  backup)
+                    TS=$(date +%Y%m%d_%H%M%S)
+                    tar czf "/var/mobile/zzuu_backups/\(abBid)_$TS.tar.gz" -C "$CONT" . 2>/dev/null && ls -lh "/var/mobile/zzuu_backups/\(abBid)_$TS.tar.gz" && echo "BACKUP_OK"
+                    ;;
+                  restore)
+                    LATEST=$(ls -t /var/mobile/zzuu_backups/\(abBid)_*.tar.gz 2>/dev/null | head -1)
+                    [ -z "$LATEST" ] && { echo "NO_BACKUP"; exit 0; }
+                    tar xzf "$LATEST" -C "$CONT" 2>/dev/null && echo "RESTORE_OK from $LATEST"
+                    ;;
+                  list)
+                    ls -lht /var/mobile/zzuu_backups/\(abBid)_*.tar.gz 2>/dev/null || echo "(no backups)"
+                    ;;
+                esac
+                """
+                let r = try await executeRootCommand(script, timeout: 300) { _ in }
+                if r.output.contains("CONTAINER_NOT_FOUND") {
+                    toolOutput = "Error: container for \(abBid) not found."
+                    toolSuccess = false
+                } else if r.output.contains("NO_BACKUP") {
+                    toolOutput = "No backups found for \(abBid)."
+                    toolSuccess = false
+                } else {
+                    toolOutput = r.output
+                    toolSuccess = r.output.contains("BACKUP_OK") || r.output.contains("RESTORE_OK") || abAction == "list"
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "resign_ipa":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let riPath = (toolArgs["path"] as? String) ?? ""
+            guard !riPath.isEmpty else {
+                toolOutput = "Error: Missing required 'path'."
+                toolSuccess = false
+                break
+            }
+            do {
+                let r = try await executeRootCommand(
+                    "which ldid >/dev/null 2>&1 && ldid -S '\(riPath)' && echo RESIGN_OK || { echo LDID_MISSING; which ldid; }",
+                    timeout: 120) { _ in }
+                if r.output.contains("LDID_MISSING") {
+                    toolOutput = "ldid not installed on the device. Install via Sileo (package: ldid) or compile via re-ios-triage bootstrap."
+                    toolSuccess = false
+                } else if r.output.contains("RESIGN_OK") {
+                    toolOutput = "Re-signed \(riPath) (fake signature, TrollStore-compatible)."
+                    toolSuccess = true
+                } else {
+                    toolOutput = "Re-sign result:\n\(r.output)"
+                    toolSuccess = false
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "macho_info":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let miPath = (toolArgs["path"] as? String) ?? ""
+            guard !miPath.isEmpty else {
+                toolOutput = "Error: Missing required 'path'."
+                toolSuccess = false
+                break
+            }
+            do {
+                let r = try await executeRootCommand(
+                    "file '\(miPath)'; echo ---; rabin2 -I '\(miPath)' 2>/dev/null | head -20; echo ---; rabin2 -L '\(miPath)' 2>/dev/null | head -20; echo ---; strings '\(miPath)' 2>/dev/null | grep -cE '^_OBJC_CLASS' | head -1",
+                    timeout: 60) { _ in }
+                toolOutput = r.output.isEmpty ? "(no output)" : r.output
+                toolSuccess = true
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "class_dump":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let cdPath = (toolArgs["path"] as? String) ?? ""
+            let cdFilter = (toolArgs["class_filter"] as? String) ?? ""
+            guard !cdPath.isEmpty else {
+                toolOutput = "Error: Missing required 'path'."
+                toolSuccess = false
+                break
+            }
+            do {
+                let cmd = """
+                which class-dump >/dev/null 2>&1 && echo HAVE_CD || { apk add --no-cache clang make git >/dev/null 2>&1; echo COMPILE_NEEDED; }
+                """
+                let cd = try await executeRootCommand(cmd, timeout: 60) { _ in }
+                if cd.output.contains("COMPILE_NEEDED") {
+                    toolOutput = "class-dump not installed. Run the re-objc-api skill bootstrap first (compiles class-dump in the sandbox), or use rabin2 -s for symbol-level triage."
+                    toolSuccess = false
+                    break
+                }
+                let filterCmd = cdFilter.isEmpty ? "" : " | grep -A20 '@interface.*\(cdFilter)'"
+                let r = try await executeRootCommand(
+                    "class-dump '\(cdPath)' 2>/dev/null\(filterCmd) | head -200",
+                    timeout: 120) { _ in }
+                toolOutput = r.output.isEmpty ? "(no classes found)" : r.output
+                toolSuccess = true
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "theos_build":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let tbDir = (toolArgs["project_dir"] as? String) ?? ""
+            guard !tbDir.isEmpty else {
+                toolOutput = "Error: Missing required 'project_dir'."
+                toolSuccess = false
+                break
+            }
+            do {
+                // Use the minis-re-build CLI in the sandbox (GitHub Actions build).
+                let r = try await executeRootCommand(
+                    "minis-re-build '\(tbDir)' '\(tbDir).deb' 2>&1 || echo BUILD_FAILED",
+                    timeout: 600) { line in }
+                if r.output.contains("BUILD_FAILED") {
+                    toolOutput = "Build failed.\n\(r.output)"
+                    toolSuccess = false
+                } else {
+                    toolOutput = r.output
+                    toolSuccess = r.output.contains("[re-build] OK")
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
         case "root_execute":
             guard JailbreakConfigStore.shared.isConfigured else {
                 toolOutput = "Error: Jailbreak SSH is not configured. Ask the user to set host/port/user/password under Settings > Jailbreak SSH."
