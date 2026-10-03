@@ -339,6 +339,40 @@ extension AIChatViewModel {
             ))
         }
 
+        // [zzuu-jb] screen_control: inject touches/hardware keys system-wide
+        // via IOKit HID (works on any app + SpringBoard). Requires the HID
+        // entitlements bundled since tier-2; no extra device-side daemon.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "screen_control",
+                description: "Inject system-wide touch input on the jailbroken iOS host: tap, double-tap, long-press, swipe, pinch, home button, or type ASCII text. Works on ANY app or SpringBoard, not just zzuu. Coordinates are in points on the main screen (portrait top-left origin). Combine with ui_dump to find buttons by label first, then tap them.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "action": AgentToolParam(type: .string, description: "One of: tap, double_tap, long_press, swipe, pinch, home, type_text. Example: {\"action\":\"tap\",\"x\":200,\"y\":640}"),
+                    "x": AgentToolParam(type: .number, description: "X coordinate in points (tap/double_tap/long_press; swipe/pinch take x,y as start point)."),
+                    "y": AgentToolParam(type: .number, description: "Y coordinate in points."),
+                    "x2": AgentToolParam(type: .number, description: "End X for swipe."),
+                    "y2": AgentToolParam(type: .number, description: "End Y for swipe."),
+                    "duration": AgentToolParam(type: .number, description: "Seconds. long_press hold time (default 1.0); swipe/pinch motion time (default 0.3/0.4)."),
+                    "scale": AgentToolParam(type: .number, description: "Pinch scale factor: >1 zoom in, <1 zoom out (default 1.5)."),
+                    "text": AgentToolParam(type: .string, description: "ASCII text for type_text (a-z A-Z 0-9 basic punctuation)."),
+                ],
+                required: ["tool_title", "action"],
+                propertyOrdering: ["tool_title", "action", "x", "y", "x2", "y2", "duration", "scale", "text"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "ui_dump",
+                description: "Dump the live UI tree of an app on the jailbroken iOS host as JSON. Injects a dumper dylib into the target process (or reads zzuu's own windows) and returns every window/view with class name, accessibility label, identifier, value, frame, hidden and disabled state. Use it to locate buttons/fields by label before calling screen_control with their frame center coordinates.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle ID. Omit or pass empty to dump zzuu's own UI."),
+                    "max_depth": AgentToolParam(type: .integer, description: "Max view recursion depth (default 12)."),
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "bundle_id", "max_depth"]
+            ))
+        }
+
         // [T-ios-vision-group #182] Expose read_image when the model can see
         // images ITSELF, or when a Vision Group is configured to see them on its
         // behalf. Previously a text-only model simply never got this tool, so an

@@ -837,6 +837,100 @@ extension AIChatViewModel {
                 toolSuccess = false
             }
             break
+        case "screen_control":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let scAction = (toolArgs["action"] as? String) ?? ""
+            guard !scAction.isEmpty else {
+                toolOutput = "Error: Missing required 'action' (tap/double_tap/long_press/swipe/pinch/home/type_text)."
+                toolSuccess = false
+                break
+            }
+            do {
+                // Marshal args to JSON and run the on-device inject daemon.
+                let scPayload: [String: Any] = [
+                    "action": scAction,
+                    "x": (toolArgs["x"] as? NSNumber) ?? 0,
+                    "y": (toolArgs["y"] as? NSNumber) ?? 0,
+                    "x2": (toolArgs["x2"] as? NSNumber) ?? 0,
+                    "y2": (toolArgs["y2"] as? NSNumber) ?? 0,
+                    "duration": (toolArgs["duration"] as? NSNumber) ?? 0,
+                    "scale": (toolArgs["scale"] as? NSNumber) ?? 1.5,
+                    "text": (toolArgs["text"] as? String) ?? "",
+                ]
+                let scData = try JSONSerialization.data(withJSONObject: scPayload)
+                let scJSON = String(data: scData, encoding: .utf8) ?? "{}"
+                let scB64 = Data(scJSON.utf8).base64EncodedString()
+                let script = """
+                PAYLOAD='\(scB64)'
+                # Run the injector inside zzuu's process space via its HID bridge.
+                BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "zzuu" -type f 2>/dev/null | head -1)
+                if [ -z "$BIN" ]; then BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*zzuu.app/*" -type f -perm +111 2>/dev/null | head -1); fi
+                if [ -z "$BIN" ]; then echo "ZZUU_BIN_NOT_FOUND"; exit 0; fi
+                # The HID bridge is a small CLI linked against zzuu's frameworks.
+                "$BIN" --zzuu-hid "$PAYLOAD" 2>&1 || echo "HID_RUN_FAILED"
+                """
+                let r = try await executeRootCommand(script, timeout: 120) { _ in }
+                if r.output.contains("ZZUU_BIN_NOT_FOUND") {
+                    toolOutput = "Error: could not locate the zzuu binary on device for HID bridge execution."
+                    toolSuccess = false
+                } else if r.output.contains("HID_RUN_FAILED") {
+                    toolOutput = "Error: HID bridge failed. The host may need the injector daemon installed (see re-ios-triage skill). Raw:\n\(r.output)"
+                    toolSuccess = false
+                } else {
+                    toolOutput = "screen_control(\(scAction)) OK\n\(r.output)"
+                    toolSuccess = true
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "ui_dump":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            do {
+                let udBid = (toolArgs["bundle_id"] as? String) ?? ""
+                let udDepth = (toolArgs["max_depth"] as? NSNumber)?.intValue ?? 12
+                let udPayload: [String: Any] = ["bundle_id": udBid, "max_depth": udDepth]
+                let udData = try JSONSerialization.data(withJSONObject: udPayload)
+                let udJSON = String(data: udData, encoding: .utf8) ?? "{}"
+                let udB64 = Data(udJSON.utf8).base64EncodedString()
+                let script = """
+                PAYLOAD='\(udB64)'
+                BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "zzuu" -type f 2>/dev/null | head -1)
+                if [ -z "$BIN" ]; then BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*zzuu.app/*" -type f -perm +111 2>/dev/null | head -1); fi
+                if [ -z "$BIN" ]; then echo "ZZUU_BIN_NOT_FOUND"; exit 0; fi
+                "$BIN" --zzuu-uidump "$PAYLOAD" 2>&1 || echo "UIDUMP_FAILED"
+                """
+                let r = try await executeRootCommand(script, timeout: 180) { _ in }
+                if r.output.contains("ZZUU_BIN_NOT_FOUND") {
+                    toolOutput = "Error: could not locate the zzuu binary on device for UI dump bridge execution."
+                    toolSuccess = false
+                } else if r.output.contains("UIDUMP_FAILED") {
+                    toolOutput = "Error: UI dump bridge failed. Raw:\n\(r.output)"
+                    toolSuccess = false
+                } else {
+                    // Trim: keep the JSON payload only
+                    var out = r.output
+                    if let jsonStart = out.range(of: "{"windows"") {
+                        out = String(out[jsonStart.lowerBound...])
+                    }
+                    if out.count > 60_000 { out = String(out.prefix(60_000)) + "\n…[truncated]" }
+                    toolOutput = "ui_dump result:\n\(out)"
+                    toolSuccess = true
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
         case "root_execute":
             guard JailbreakConfigStore.shared.isConfigured else {
                 toolOutput = "Error: Jailbreak SSH is not configured. Ask the user to set host/port/user/password under Settings > Jailbreak SSH."

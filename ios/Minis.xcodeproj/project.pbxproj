@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		9F382018E522E3BF28CDC2F4 /* HIDBridgeMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6483A8FB10223867927E8A85 /* HIDBridgeMain.swift */; };
+		276B57ACC501F5C8F3641878 /* UIDumpInjector.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4D7673C93F3AB8200899679D /* UIDumpInjector.mm */; };
+		7457A9F16B499C67718E7D9B /* HIDTouchInjector.mm in Sources */ = {isa = PBXBuildFile; fileRef = 17FF33BC79DA8C44BADA9351 /* HIDTouchInjector.mm */; };
 		21FED4B7BB6F6D9476C9992E /* VoiceProvider+System.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88993FC8E3F0199C6638F664 /* VoiceProvider+System.swift */; };
 		241D530017827D7F0EB604DE /* VoiceProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941B643B8A2F048A2B154E /* VoiceProviderFactory.swift */; };
 		2A4FD49F872431D703328384 /* VoiceOutputPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 424510790AF3FB2452D3CCE3 /* VoiceOutputPlayer.swift */; };
@@ -642,6 +645,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		6483A8FB10223867927E8A85 /* HIDBridgeMain.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = "HIDBridgeMain.swift"; path = JBTools/HIDBridgeMain.swift; sourceTree = "<group>"; };
+		4D7673C93F3AB8200899679D /* UIDumpInjector.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = "UIDumpInjector.mm"; path = JBTools/UIDumpInjector.mm; sourceTree = "<group>"; };
+		4F92E70B66F3475A1C0A0FCD /* UIDumpInjector.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = "UIDumpInjector.h"; path = JBTools/UIDumpInjector.h; sourceTree = "<group>"; };
+		17FF33BC79DA8C44BADA9351 /* HIDTouchInjector.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = "HIDTouchInjector.mm"; path = JBTools/HIDTouchInjector.mm; sourceTree = "<group>"; };
+		B58E84FD6A99235AB27996D4 /* HIDTouchInjector.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = "HIDTouchInjector.h"; path = JBTools/HIDTouchInjector.h; sourceTree = "<group>"; };
 		0ED149397BEA7E0408C92688 /* GroupVoiceModelsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupVoiceModelsView.swift; sourceTree = "<group>"; };
 		0F5379380323FA8C6477708C /* GroupSlotPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupSlotPicker.swift; sourceTree = "<group>"; };
 		16FF3462D09402F14B610CD6 /* VoiceWaveformView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceWaveformView.swift; sourceTree = "<group>"; };
@@ -1349,6 +1357,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		D37C8682B62105DCA80527AB /* JBTools */ = {
+			isa = PBXGroup;
+			children = (
+				D37C8682B62105DCA80527AB /* JBTools */,
+				B58E84FD6A99235AB27996D4 /* HIDTouchInjector.h */,
+				17FF33BC79DA8C44BADA9351 /* HIDTouchInjector.mm */,
+				4F92E70B66F3475A1C0A0FCD /* UIDumpInjector.h */,
+				4D7673C93F3AB8200899679D /* UIDumpInjector.mm */,
+				6483A8FB10223867927E8A85 /* HIDBridgeMain.swift */,
+			);
+			path = JBTools;
+			sourceTree = "<group>";
+		 };
 		42A3821DABA8773E8A5BA57E /* Voice */ = {
 			isa = PBXGroup;
 			children = (
@@ -2768,6 +2789,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7457A9F16B499C67718E7D9B /* HIDTouchInjector.mm in Sources */,
+				276B57ACC501F5C8F3641878 /* UIDumpInjector.mm in Sources */,
+				9F382018E522E3BF28CDC2F4 /* HIDBridgeMain.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
