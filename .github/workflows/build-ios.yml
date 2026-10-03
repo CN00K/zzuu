@@ -116,19 +116,28 @@ jobs:
             ls -la "$APP" >&2
             exit 1
           fi
-          # Sign the main binary with entitlements (CoreTrust accepts ldid's
-          # fake signature; the entitlements blob is embedded and honored).
+          # Sign the main binary with the full entitlement pack (CoreTrust
+          # accepts ldid's fake signature; the blob is embedded and honored).
           ldid -Ssrc/ios/Minis.entitlements "$APP/$EXEC"
           # Sign embedded frameworks so dyld loads them
           find "$APP" -name "*.framework" -type d | while IFS= read -r fw; do
             BIN=$(basename "$fw" .framework)
             [ -f "$fw/$BIN" ] && ldid -S "$fw/$BIN"
           done
-          find "$APP/PlugIns" -name "*.appex" -type d 2>/dev/null | while IFS= read -r ex; do
-            BIN=$(basename "$ex" .appex)
-            [ -f "$ex/$BIN" ] && ldid -S "$ex/$BIN"
+          # Sign extensions with THEIR entitlements (app group etc.)
+          for EX_PAIR in \
+            "PlugIns/ShareExtension.appex:src/ios/ShareExtension/ShareExtension.entitlements" \
+            "PlugIns/MinisFileProvider.appex:src/ios/FileProvider/FileProvider.entitlements" \
+            "PlugIns/AgentWidgetExtension.appex:src/ios/AgentWidget/AgentWidget.entitlements"; do
+            REL="${EX_PAIR%%:*}"; ENT="${EX_PAIR##*:}"
+            EXDIR="$APP/$REL"
+            EXBIN=$(basename "$REL" .appex)
+            if [ -f "$EXDIR/$EXBIN" ]; then
+              [ -f "$ENT" ] && ldid -S"$ENT" "$EXDIR/$EXBIN" || ldid -S "$EXDIR/$EXBIN"
+              echo "signed $REL"
+            fi
           done
-          # verify entitlements are embedded
+          # verify entitlements are embedded in main binary
           ldid -e "$APP/$EXEC" | head -25
 
       - name: Package .app
