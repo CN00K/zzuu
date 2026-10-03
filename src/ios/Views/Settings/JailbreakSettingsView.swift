@@ -98,8 +98,9 @@ struct JailbreakSettingsView: View {
 // MARK: - JBLinker
 //
 // Stateless runner so the settings screen doesn't need a chat view model.
-// Key push uses FILE PIPELINE only — the pubkey never appears in a command
-// line, so no quote-escaping layer can break it.
+// Password auth uses the OpenSSH-native SSH_ASKPASS mechanism: a small script
+// echoes the password, ssh invokes it when it needs one. No sshpass, no
+// expect, no quote-escaping layer — the password never appears in argv.
 enum JBLinker {
     struct Outcome { let ok: Bool; let message: String }
 
@@ -110,16 +111,27 @@ enum JBLinker {
         + "-o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15 -p \(port)"
     }
 
-    /// sshpass wrapper: password auth, pubkey auth disabled (used before the
-    /// key is installed). Password goes via a 0600 file, never in argv.
-    static func pwSSHCmd(_ remote: String, port: Int, user: String, host: String) -> String {
-        "/bin/sh -c \"sshpass -f /tmp/.zzuu_jb_pw ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -p \(port) \(user)@\(host) '\(remote)'\""
+    /// Stage the password + askpass script inside the sandbox. The script
+    /// simply echoes the password (read from a 0600 file); ssh calls it via
+    /// SSH_ASKPASS whenever it needs a password. Any password characters
+    /// survive verbatim (base64 transport).
+    static func stagePassword(_ password: String) async throws {
+        let b64 = Data(password.utf8).base64EncodedString()
+        let r = try await JailbreakRunner.run(
+            "echo \(b64) | base64 -d > /tmp/.zzuu_jb_pw && chmod 600 /tmp/.zzuu_jb_pw && "
+            + "printf '#!/bin/sh\\ncat /tmp/.zzuu_jb_pw\\n' > /tmp/.zzuu_askpass && chmod 700 /tmp/.zzuu_askpass && echo ASKPASS_OK")
+        guard r.output.contains("ASKPASS_OK") else {
+            throw NSError(domain: "zzuu.jb", code: -6,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to stage password: \(r.output.suffix(200))"])
+        }
     }
 
-    /// Pipe-mode remote: reads the pubkey from stdin and appends it to
-    /// authorized_keys. Zero quotes around the key text — it travels via
-    /// stdin, so no escaping layer can break it.
-    static let pipingRemote = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo PUSH_OK"
+    /// Password-auth ssh via SSH_ASKPASS. DISPLAY forces askpass mode even
+    /// without a TTY; setsid detaches from the controlling terminal so ssh
+    /// cannot prompt interactively (it must use SSH_ASKPASS).
+    static func pwSSHCmd(_ remote: String, port: Int, user: String, host: String) -> String {
+        "/bin/sh -c \"DISPLAY=:0 SSH_ASKPASS=/tmp/.zzuu_askpass SSH_ASKPASS_REQUIRE=force setsid ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -p \(port) \(user)@\(host) '\(remote)'\""
+    }
 
     /// Ensure key in iSH sandbox /root/.ssh/ — all ops inside the sandbox.
     static func ensureKey() async throws -> String {
@@ -156,18 +168,6 @@ enum JBLinker {
         return read.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Stage the SSH password in a 0600 file inside the sandbox (for sshpass -f).
-    static func stagePassword(_ password: String) async throws {
-        // base64 so any password characters survive verbatim.
-        let b64 = Data(password.utf8).base64EncodedString()
-        let r = try await JailbreakRunner.run(
-            "echo \(b64) | base64 -d > /tmp/.zzuu_jb_pw && chmod 600 /tmp/.zzuu_jb_pw && echo PW_OK")
-        guard r.output.contains("PW_OK") else {
-            throw NSError(domain: "zzuu.jb", code: -6,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to stage password: \(r.output)"])
-        }
-    }
-
     static func test(host: String, port: Int, user: String) async -> Outcome {
         do {
             let _ = try await ensureKey()
@@ -188,21 +188,20 @@ enum JBLinker {
             try await stagePassword(password)
 
             // 1) Probe with password auth (key not installed yet on first Link).
-            let probe = try await JailbreakRunner.run(pwSSHCmd(
-                "echo PORT_OK", port: port, user: user, host: host) + " 2>&1 || echo PORT_FAIL")
+            let probe = try await JailbreakRunner.run(
+                pwSSHCmd("echo PORT_OK", port: port, user: user, host: host) + " 2>&1 || echo PORT_FAIL")
             guard probe.output.contains("PORT_OK") else {
                 let denied = probe.output.contains("Permission denied")
                 return Outcome(ok: false,
                     message: denied
-                        ? "Password rejected by sshd. Check the SSH password on the device (default is usually 'alpine'; the user's terminal password may differ)."
+                        ? "Password rejected by sshd. Check the SSH password on the device."
                         : "Cannot reach \(host):\(port). \(probe.output.suffix(180))")
             }
 
-            // 2) Push the pubkey: pipe the sandbox file over ssh stdin — the
-            //    key text never appears in any command line, so no quoting
-            //    layer can break it.
+            // 2) Push the pubkey: pipe the key file over ssh stdin. The key
+            //    text never appears in any command line.
             let push = try await JailbreakRunner.run(
-                "/bin/sh -c \"cat /root/.ssh/id_ed25519_jb.pub | \(pwSSHCmd(pipingRemote, port: port, user: user, host: host))\" 2>&1 || echo PUSH_FAIL"
+                "/bin/sh -c \"cat /root/.ssh/id_ed25519_jb.pub | DISPLAY=:0 SSH_ASKPASS=/tmp/.zzuu_askpass SSH_ASKPASS_REQUIRE=force setsid ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -p \(port) \(user)@\(host) 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo PUSH_OK'\" 2>&1 || echo PUSH_FAIL"
             )
             guard push.output.contains("PUSH_OK") else {
                 return Outcome(ok: false,
