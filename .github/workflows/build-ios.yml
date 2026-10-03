@@ -99,6 +99,26 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
+      - name: Fake-sign with ldid (embed entitlements for TrollStore)
+        run: |
+          brew install ldid || true
+          APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "App: $APP"
+          # Sign the main binary with entitlements (CoreTrust accepts ldid's
+          # fake signature; the entitlements blob is embedded and honored).
+          ldid -Ssrc/ios/Minis.entitlements "$APP/zzuu"
+          # Sign embedded frameworks + extensions so dyld loads them
+          find "$APP" -name "*.framework" -type d | while read fw; do
+            BIN=$(basename "$fw" .framework)
+            [ -f "$fw/$BIN" ] && ldid -S "$fw/$BIN"
+          done
+          find "$APP/PlugIns" -name "*.appex" -type d 2>/dev/null | while read ex; do
+            BIN=$(basename "$ex" .appex)
+            [ -f "$ex/$BIN" ] && ldid -S "$ex/$BIN"
+          done
+          # verify entitlements are embedded
+          ldid -e "$APP/zzuu" | head -25
+
       - name: Package .app
         run: |
           APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
