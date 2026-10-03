@@ -145,8 +145,11 @@ enum JBLinker {
             throw NSError(domain: "zzuu.jb", code: -5,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client in the sandbox. Output: \(deps.output.suffix(200))"])
         }
+        // -N '' loses its quoting through the exec layer (empty arg becomes
+        // nothing, -N then swallows -f -> "Too many arguments"). Wrap in sh -c
+        // so the empty-password quotes survive intact.
         let gen = try await JailbreakRunner.run(
-            "ssh-keygen -t ed25519 -N '' -f \(priv.path) -C zzuu-jb -q")
+            "/bin/sh -c \"ssh-keygen -t ed25519 -N '' -f '\(priv.path)' -C zzuu-jb -q\"")
         if gen.exitCode != 0 {
             throw NSError(domain: "zzuu.jb", code: -3,
                           userInfo: [NSLocalizedDescriptionKey: "ssh-keygen failed: \(gen.output)"])
