@@ -234,6 +234,94 @@ extension AIChatViewModel {
             ))
         }
 
+        // [zzuu-tools-v2] Tier 1+2: frida control, keychain dump, syslog,
+        // traffic capture, app backup, resign, macho info, class dump, theos build.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "frida_control",
+                description: "Control frida-server on the jailbroken device: start, stop, status, list processes, list apps. Use before any frida-based operation.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "action": AgentToolParam(type: .string, description: "start | stop | status | ps | apps", enumValues: ["start", "stop", "status", "ps", "apps"]),
+                ],
+                required: ["tool_title", "action"],
+                propertyOrdering: ["tool_title", "action"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "keychain_dump",
+                description: "Dump generic-password keychain items on the jailbroken device (tokens, credentials, session IDs). HIGH SENSITIVITY: output contains secrets — keep in local workspace only.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "keyword": AgentToolParam(type: .string, description: "Optional filter (service/account substring).")
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "keyword"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "syslog_stream",
+                description: "Read recent system log entries (os log) on the jailbroken device. Use to observe app behavior, crashes, and NSLog output from tweaks.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "process": AgentToolParam(type: .string, description: "Optional process name filter."),
+                    "lines": AgentToolParam(type: .integer, description: "Max lines to return (default 100).")
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "process", "lines"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "app_backup",
+                description: "Backup or restore an app's data container on the jailbroken device (tar to /var/mobile/zzuu_backups/). Use before destructive operations.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle id."),
+                    "action": AgentToolParam(type: .string, description: "backup | restore | list", enumValues: ["backup", "restore", "list"])
+                ],
+                required: ["tool_title", "bundle_id", "action"],
+                propertyOrdering: ["tool_title", "bundle_id", "action"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "resign_ipa",
+                description: "Re-sign an app or binary on the device with ldid (fake signature, TrollStore-compatible). Use after modifying a binary or injecting a dylib.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "path": AgentToolParam(type: .string, description: "Device path of the binary or .app to re-sign.")
+                ],
+                required: ["tool_title", "path"],
+                propertyOrdering: ["tool_title", "path"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "macho_info",
+                description: "Mach-O binary quick analysis on the device: architecture, cryptid (FairPlay), load commands, linked dylibs, symbols. Use to triage a binary before deeper analysis.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "path": AgentToolParam(type: .string, description: "Device path of the binary to analyze.")
+                ],
+                required: ["tool_title", "path"],
+                propertyOrdering: ["tool_title", "path"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "class_dump",
+                description: "Generate ObjC class headers from a decrypted binary on the device (class-dump style: interfaces, methods, protocols). Requires a decrypted binary (run frida-ios-dump first for encrypted apps).",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "path": AgentToolParam(type: .string, description: "Device path of the decrypted binary."),
+                    "class_filter": AgentToolParam(type: .string, description: "Optional class name filter.")
+                ],
+                required: ["tool_title", "path"],
+                propertyOrdering: ["tool_title", "path", "class_filter"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "theos_build",
+                description: "Trigger a Theos tweak build on the GitHub Actions runner (minis-re-build): package the tweak source, build .deb, return the artifact. Requires RE_BUILD_TOKEN env var.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "project_dir": AgentToolParam(type: .string, description: "Sandbox path of the tweak project (contains control + Makefile + Source/Tweak.xm).")
+                ],
+                required: ["tool_title", "project_dir"],
+                propertyOrdering: ["tool_title", "project_dir"]
+            ))
+        }
+
         // [zzuu-jb] root_execute: run commands on the jailbroken iOS host via
         // OpenSSH (root). Only advertised when Settings > Jailbreak SSH is
         // configured; otherwise the model never learns the tool exists.
@@ -248,6 +336,40 @@ extension AIChatViewModel {
                 ],
                 required: ["tool_title", "command"],
                 propertyOrdering: ["tool_title", "command", "timeout"]
+            ))
+        }
+
+        // [zzuu-jb] screen_control: inject touches/hardware keys system-wide
+        // via IOKit HID (works on any app + SpringBoard). Requires the HID
+        // entitlements bundled since tier-2; no extra device-side daemon.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "screen_control",
+                description: "Inject system-wide touch input on the jailbroken iOS host: tap, double-tap, long-press, swipe, pinch, home button, or type ASCII text. Works on ANY app or SpringBoard, not just zzuu. Coordinates are in points on the main screen (portrait top-left origin). Combine with ui_dump to find buttons by label first, then tap them.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "action": AgentToolParam(type: .string, description: "One of: tap, double_tap, long_press, swipe, pinch, home, type_text. Example: {\"action\":\"tap\",\"x\":200,\"y\":640}"),
+                    "x": AgentToolParam(type: .number, description: "X coordinate in points (tap/double_tap/long_press; swipe/pinch take x,y as start point)."),
+                    "y": AgentToolParam(type: .number, description: "Y coordinate in points."),
+                    "x2": AgentToolParam(type: .number, description: "End X for swipe."),
+                    "y2": AgentToolParam(type: .number, description: "End Y for swipe."),
+                    "duration": AgentToolParam(type: .number, description: "Seconds. long_press hold time (default 1.0); swipe/pinch motion time (default 0.3/0.4)."),
+                    "scale": AgentToolParam(type: .number, description: "Pinch scale factor: >1 zoom in, <1 zoom out (default 1.5)."),
+                    "text": AgentToolParam(type: .string, description: "ASCII text for type_text (a-z A-Z 0-9 basic punctuation)."),
+                ],
+                required: ["tool_title", "action"],
+                propertyOrdering: ["tool_title", "action", "x", "y", "x2", "y2", "duration", "scale", "text"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "ui_dump",
+                description: "Dump the live UI tree of an app on the jailbroken iOS host as JSON. Injects a dumper dylib into the target process (or reads zzuu's own windows) and returns every window/view with class name, accessibility label, identifier, value, frame, hidden and disabled state. Use it to locate buttons/fields by label before calling screen_control with their frame center coordinates.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle ID. Omit or pass empty to dump zzuu's own UI."),
+                    "max_depth": AgentToolParam(type: .integer, description: "Max view recursion depth (default 12)."),
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "bundle_id", "max_depth"]
             ))
         }
 

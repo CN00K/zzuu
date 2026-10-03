@@ -109,6 +109,10 @@ struct MinisApp: App {
     @State private var backgroundEntryDate: Date?
 
     init() {
+        // [zzuu-jb] Hidden CLI bridge (--zzuu-hid / --zzuu-uidump): when root
+        // execs this binary directly with those flags, handle the request and
+        // exit before any app UI comes up.
+        zzuuBridgeMain()
         // [T-ios-mac-uncaught-nsexception] FIRST statement in the process's own
         // code — before any subsystem gets a chance to throw.
         //

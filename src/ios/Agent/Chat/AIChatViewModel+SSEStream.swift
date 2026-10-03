@@ -458,6 +458,8 @@ extension AIChatViewModel {
                     let blockKind: AssistantBlockKind = switch name {
                     case "shell_execute": .shellTool(command: "")
                     case "root_execute": .rootShellTool(command: "")
+                    case "screen_control": .rootShellTool(command: "screen_control")
+                    case "ui_dump": .rootShellTool(command: "ui_dump")
                     case "file_read": .fileReadTool(path: "")
                     case "file_write": .fileWriteTool(path: "")
                     case "file_edit": .fileEditTool(path: "")
@@ -705,6 +707,14 @@ extension AIChatViewModel {
                     case "root_execute":
                         if let cmd = extractPartialStringValue("command", from: accumulated) {
                             return .rootShellTool(command: cmd)
+                        }
+                    case "screen_control":
+                        if let a = extractPartialStringValue("action", from: accumulated) {
+                            return .rootShellTool(command: "screen_control(\(a))")
+                        }
+                    case "ui_dump":
+                        if let b = extractPartialStringValue("bundle_id", from: accumulated) {
+                            return .rootShellTool(command: "ui_dump(\(b))")
                         }
                     case "browser_use":
                         if let action = extractPartialStringValue("action", from: accumulated) {

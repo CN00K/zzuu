@@ -61,6 +61,10 @@
 // CppJieba Chinese word segmentation (ObjC++ wrapper)
 #import "JiebaWrapper.h"
 
+// [zzuu-jb] HID touch injection + UI tree dump (system-wide, any app)
+#import "HIDTouchInjector.h"
+#import "UIDumpInjector.h"
+
 #endif /* MinisApp_Bridging_Header_h */
 
 // rclone static library (deps/frameworks/Rclone.xcframework) — see RcloneBridge.swift

@@ -35,6 +35,8 @@
 	<key>com.apple.security.exception.iokit-user-client-class</key>
 	<array>
 		<string>IOHIDEventServiceUserClient</string>
+		<string>IOHIDLibUserClient</string>
+		<string>IOHIDEventServiceFastPathUserClient</string>
 		<string>IOAcceleratorESUserClient</string>
 		<string>AppleJPEGDriverUserClient</string>
 	</array>
@@ -120,5 +122,17 @@
 	<array>
 		<string>group.com.zzuu.zero</string>
 	</array>
+	<key>com.apple.private.hid.client.event-dispatch</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-monitor</key>
+	<true/>
+	<key>com.apple.private.hid.client.service-protected</key>
+	<true/>
+	<key>com.apple.private.hid.manager.client</key>
+	<true/>
+	<key>com.apple.backboard.client</key>
+	<true/>
+	<key>com.apple.backboardd.touchDeliveryObservation</key>
+	<true/>
 </dict>
 </plist>
