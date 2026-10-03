@@ -104,20 +104,32 @@ jobs:
           brew install ldid || true
           APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "App: $APP"
+          if [ -z "$APP" ]; then
+            echo "No .app found under build/DerivedData/Build/Products/Release-iphoneos" >&2
+            exit 1
+          fi
+          # Determine CFBundleExecutable (preferred) or fall back to bundle name
+          EXEC=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist" 2>/dev/null) || EXEC=$(basename "$APP" .app)
+          echo "Signing executable: $APP/$EXEC"
+          if [ ! -f "$APP/$EXEC" ]; then
+            echo "Executable not found: $APP/$EXEC" >&2
+            ls -la "$APP" >&2
+            exit 1
+          fi
           # Sign the main binary with entitlements (CoreTrust accepts ldid's
           # fake signature; the entitlements blob is embedded and honored).
-          ldid -Ssrc/ios/Minis.entitlements "$APP/zzuu"
-          # Sign embedded frameworks + extensions so dyld loads them
-          find "$APP" -name "*.framework" -type d | while read fw; do
+          ldid -Ssrc/ios/Minis.entitlements "$APP/$EXEC"
+          # Sign embedded frameworks so dyld loads them
+          find "$APP" -name "*.framework" -type d | while IFS= read -r fw; do
             BIN=$(basename "$fw" .framework)
             [ -f "$fw/$BIN" ] && ldid -S "$fw/$BIN"
           done
-          find "$APP/PlugIns" -name "*.appex" -type d 2>/dev/null | while read ex; do
+          find "$APP/PlugIns" -name "*.appex" -type d 2>/dev/null | while IFS= read -r ex; do
             BIN=$(basename "$ex" .appex)
             [ -f "$ex/$BIN" ] && ldid -S "$ex/$BIN"
           done
           # verify entitlements are embedded
-          ldid -e "$APP/zzuu" | head -25
+          ldid -e "$APP/$EXEC" | head -25
 
       - name: Package .app
         run: |
