@@ -21,149 +21,133 @@ struct JailbreakSettingsView: View {
                 TextField("root", text: $cfg.user)
                     .autocorrectionDisabled()
             }
-
-            Section {
+            Section("Authentication") {
                 if cfg.linked {
-                    Label("Linked (key auth)", systemImage: "checkmark.seal.fill")
+                    Label("Linked (key auth)", systemImage: "checkmark.shield")
                         .foregroundStyle(.green)
-                } else {
-                    Label("Not linked", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                }
-            } footer: {
-                Text("Linking pushes a key from the Linux sandbox into the device's authorized_keys using the password once. Afterwards all commands run key-only as root.")
-            }
-
-            if !cfg.linked {
-                Section("Password (one-time)") {
-                    SecureField("SSH password", text: $password)
-                        .autocorrectionDisabled()
-                }
-            }
-
-            Section {
-                Button {
-                    run { await linkOrTest(link: true) }
-                } label: {
-                    HStack {
-                        if busy { ProgressView() }
-                        Text(cfg.linked ? "Re-link" : "Link Device")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .disabled(busy || (!cfg.linked && password.isEmpty))
-
-                Button {
-                    run { await linkOrTest(link: false) }
-                } label: {
-                    HStack {
-                        if busy { ProgressView() }
-                        Text("Test Connection")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .disabled(busy || !cfg.linked)
-
-                if let status {
-                    Text(status)
-                        .font(.footnote)
-                        .foregroundStyle(statusOK ? Color.green : Color.red)
-                        .textSelection(.enabled)
-                }
-            }
-
-            if cfg.linked {
-                Section {
-                    Button("Forget Password", role: .destructive) {
-                        cfg.clearPassword()
-                    }
                     Button("Unlink", role: .destructive) {
                         cfg.reset()
-                        status = nil
+                        status = "Unlinked."
+                        statusOK = false
                     }
+                } else {
+                    SecureField("SSH password (used once)", text: $password)
+                    Button {
+                        busy = true
+                        status = nil
+                        Task {
+                            let r = await linkOrTest(link: true)
+                            status = r.message
+                            statusOK = r.ok
+                            busy = false
+                        }
+                    } label: {
+                        if busy { ProgressView() } else { Text("Link Device") }
+                    }
+                    .disabled(busy || password.isEmpty)
+                }
+            }
+            if let status {
+                Section("Status") {
+                    Text(status)
+                        .font(.footnote)
+                        .foregroundStyle(statusOK ? .green : .red)
+                }
+            }
+            if !cfg.linked {
+                Section {
+                    Text("Linking pushes a key from the Linux sandbox into the device's authorized_keys using the password once. Afterwards all commands run key-only as root.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("Test") {
+                Button {
+                    busy = true
+                    status = nil
+                    Task {
+                        let r = await linkOrTest(link: false)
+                        status = r.message
+                        statusOK = r.ok
+                        busy = false
+                    }
+                } label: {
+                    if busy { ProgressView() } else { Text("Test Connection") }
+                }
+                .disabled(busy || !cfg.linked)
+            }
+            if cfg.linked {
+                Section("What this enables") {
+                    Text("root_execute: run commands on the jailbroken device as root (frida, dpkg, system logs, class-dump).")
+                        .font(.footnote)
                 }
             }
         }
         .navigationTitle("Jailbreak SSH")
     }
 
-    private func run(_ op: @escaping () async -> Void) {
-        busy = true
-        Task {
-            await op()
-            busy = false
-        }
-    }
-
-    @MainActor
-    private func linkOrTest(link: Bool) async {
-        // Stand-in view model access: linking lives on AIChatViewModel but is
-        // stateless w.r.t. any session — route through a throwaway instance
-        // would be wrong, so we call the static-ish path directly instead.
+    private func linkOrTest(link: Bool) async -> JBLinker.Outcome {
         if link {
-            let r = await JBLinker.link(host: cfg.host, port: cfg.port, user: cfg.user,
-                                        password: password)
-            status = r.message
-            statusOK = r.ok
-            if r.ok { password = "" }
+            return await JBLinker.link(host: cfg.host, port: cfg.port, user: cfg.user, password: password)
         } else {
-            let r = await JBLinker.test(host: cfg.host, port: cfg.port, user: cfg.user)
-            status = r.message
-            statusOK = r.ok
+            return await JBLinker.test(host: cfg.host, port: cfg.port, user: cfg.user)
         }
     }
 }
 
+// MARK: - JBLinker
+//
 // Stateless runner so the settings screen doesn't need a chat view model.
 enum JBLinker {
     struct Outcome { let ok: Bool; let message: String }
 
-    static let jbKeyPath = "~/.ssh/id_ed25519_jb"
+    static let jbKeyPath = "/root/.ssh/id_ed25519_jb"
 
     static func sshBase(port: Int) -> String {
         "-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
         + "-o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15 -p \(port)"
     }
 
+    /// Ensure key in iSH sandbox /root/.ssh/ — all ops inside the sandbox.
     static func ensureKey() async throws -> String {
-        let dir = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                              ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!).appendingPathComponent(".ssh")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let priv = dir.appendingPathComponent("id_ed25519_jb")
-        if FileManager.default.fileExists(atPath: priv.path) {
-            return try String(data: Data(contentsOf: dir.appendingPathComponent("id_ed25519_jb.pub")),
-                              encoding: .utf8)!
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // First-run toolchain: the rootfs ships without an SSH client. Install
-        // openssh-client (provides ssh-keygen AND ssh) before any step that
-        // needs it - the old code relied on it being present and every Link
-        // attempt failed silently.
+        // Install openssh-client if missing (provides ssh-keygen and ssh).
         let deps = try await JailbreakRunner.run(
             "which ssh-keygen >/dev/null 2>&1 && echo DEPS_OK || apk add --no-cache openssh-client >/dev/null 2>&1 && echo DEPS_OK")
-        if !deps.output.contains("DEPS_OK") {
+        guard deps.output.contains("DEPS_OK") else {
             throw NSError(domain: "zzuu.jb", code: -5,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client in the sandbox. Output: \(deps.output.suffix(200))"])
+                userInfo: [NSLocalizedDescriptionKey: "Failed to install openssh-client in sandbox. \(deps.output.suffix(200))"])
         }
-        // -N '' loses its quoting through the exec layer (empty arg becomes
-        // nothing, -N then swallows -f -> "Too many arguments"). Wrap in sh -c
-        // so the empty-password quotes survive intact.
+        // Reuse an existing key when present.
+        let check = try await JailbreakRunner.run(
+            "test -f /root/.ssh/id_ed25519_jb.pub && echo HAVE_KEY || echo NO_KEY")
+        if check.output.contains("HAVE_KEY") {
+            let read = try await JailbreakRunner.run("cat /root/.ssh/id_ed25519_jb.pub")
+            guard read.exitCode == 0 else {
+                throw NSError(domain: "zzuu.jb", code: -4,
+                    userInfo: [NSLocalizedDescriptionKey: "Cannot read pubkey: \(read.output)"])
+            }
+            return read.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // Generate keypair inside the sandbox (sandbox path, NOT iOS FS).
         let gen = try await JailbreakRunner.run(
-            "/bin/sh -c \"ssh-keygen -t ed25519 -N '' -f '\(priv.path)' -C zzuu-jb -q\"")
-        if gen.exitCode != 0 {
+            "/bin/sh -c \"mkdir -p /root/.ssh && ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519_jb -C zzuu-jb -q\"")
+        guard gen.exitCode == 0 else {
             throw NSError(domain: "zzuu.jb", code: -3,
-                          userInfo: [NSLocalizedDescriptionKey: "ssh-keygen failed: \(gen.output)"])
+                userInfo: [NSLocalizedDescriptionKey: "ssh-keygen failed: \(gen.output)"])
         }
-        return try String(data: Data(contentsOf: dir.appendingPathComponent("id_ed25519_jb.pub")),
-                          encoding: .utf8)!
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let read = try await JailbreakRunner.run("cat /root/.ssh/id_ed25519_jb.pub")
+        guard read.exitCode == 0 else {
+            throw NSError(domain: "zzuu.jb", code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot read pubkey: \(read.output)"])
+        }
+        return read.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func test(host: String, port: Int, user: String) async -> Outcome {
         do {
             let _ = try await ensureKey()
             let r = try await JailbreakRunner.run(
-                "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo OK $(uname -a | cut -c1-40)'")
+                "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo OK; uname -a'")
             if r.output.contains("OK") {
                 return Outcome(ok: true, message: r.output.trimmingCharacters(in: .whitespacesAndNewlines))
             }
@@ -176,58 +160,45 @@ enum JBLinker {
     static func link(host: String, port: Int, user: String, password: String) async -> Outcome {
         do {
             let pub = try await ensureKey()
-            JailbreakConfigStore.shared.setPassword(password)
 
-            // netcat lives in a separate package; fall back to an ssh probe
-            // (Permission denied / password prompt = port reachable).
-            let probeCmd = """
-            command -v nc >/dev/null 2>&1 && { nc -z -w 5 \(host) \(port) && echo PORT_OK || echo PORT_FAIL; } || \
-            { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p \(port) \(user)@\(host) 'echo PROBE' 2>&1 | grep -qE "PROBE|Permission denied|password" && echo PORT_OK || echo PORT_FAIL; }
-            """
-            let probe = try await JailbreakRunner.run(probeCmd)
-            if !probe.output.contains("PORT_OK") {
+            // Probe reachability with ssh (nc/netcat may not exist in rootfs;
+            // ssh is reliable once openssh-client is installed).
+            let probe = try await JailbreakRunner.run(
+                "ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -p \(port) \(user)@\(host) 'echo PORT_OK' 2>&1 || echo PORT_FAIL")
+            guard probe.output.contains("PORT_OK") else {
                 return Outcome(ok: false,
-                               message: "Cannot reach \(host):\(port) from the sandbox. Check host/port and that OpenSSH is running on the device. Output: \(probe.output.suffix(150))")
+                    message: "Cannot reach \(host):\(port). Check host/port and that OpenSSH is running on the device. Output: \(probe.output.suffix(180))")
             }
 
-            let pwFile = "/tmp/.zzuu_jb_pw"
-            try Data(password.utf8).write(to: URL(fileURLWithPath: pwFile), options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: pwFile)
-
-            let expectScript = """
-            #!/usr/bin/expect -f
-            set timeout 30
-            set pw [read [open /tmp/.zzuu_jb_pw r]]
-            set pw [string trim $pw]
-            spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p \(port) \(user)@\(host) "mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF '\(pub)' ~/.ssh/authorized_keys 2>/dev/null || echo '\(pub)' >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED"
-            expect {
-                -re "(?i)password:" { send "$pw\\r"; exp_continue }
-                "KEY_INSTALLED" { exit 0 }
-                timeout { exit 124 }
-                eof { exit 0 }
-            }
-            """
-            let scriptPath = "/tmp/.zzuu_jb_link.exp"
-            try expectScript.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptPath)
-
-            let install = try await JailbreakRunner.run(
-                "apk add --no-cache expect >/dev/null 2>&1 || true\n"
-                + "command -v expect >/dev/null 2>&1 || { echo EXPECT_MISSING; exit 0; }\n"
-                + "expect \(scriptPath); rc=$?; rm -f \(scriptPath) \(pwFile); exit $rc")
-            if install.exitCode != 0 || !install.output.contains("KEY_INSTALLED") {
+            // Push the pubkey using sshpass (already in rootfs; avoids the
+            // expect dependency entirely).
+            let inst = try await JailbreakRunner.run(
+                "which sshpass >/dev/null 2>&1 && echo SP_OK || apk add --no-cache sshpass >/dev/null 2>&1 && echo SP_OK")
+            guard inst.output.contains("SP_OK") else {
                 return Outcome(ok: false,
-                               message: "Password authentication failed or timed out. Output: \(install.output.suffix(300))")
+                    message: "Failed to install sshpass in the sandbox. Output: \(inst.output.suffix(180))")
             }
-
+            // Write the pubkey into the sandbox /tmp, then pipe it over ssh.
+            let write = try await JailbreakRunner.run(
+                "cat > /tmp/.zzuu_jb_pub << 'ZZEOF'\n\(pub)\nZZEOF\necho PUB_SAVED")
+            guard write.output.contains("PUB_SAVED") else {
+                return Outcome(ok: false, message: "Failed to stage pubkey: \(write.output.suffix(180))")
+            }
+            let push = try await JailbreakRunner.run(
+                "/bin/sh -c \"sshpass -p '\(password)' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p \(port) \(user)@\(host) 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF \"$(cat /tmp/.zzuu_jb_pub)\" ~/.ssh/authorized_keys 2>/dev/null || cat /tmp/.zzuu_jb_pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; echo KEY_INSTALLED'\"")
+            guard push.output.contains("KEY_INSTALLED") else {
+                return Outcome(ok: false,
+                    message: "Key push failed. Check the password. Output: \(push.output.suffix(220))")
+            }
+            // Verify key-only auth works.
             let verify = try await JailbreakRunner.run(
                 "ssh \(sshBase(port: port)) -i \(jbKeyPath) \(user)@\(host) 'echo ZZUU_KEY_OK'")
-            if verify.output.contains("ZZUU_KEY_OK") {
-                JailbreakConfigStore.shared.linked = true
-                return Outcome(ok: true, message: "Linked. root_execute is now available — key-based auth verified.")
+            guard verify.output.contains("ZZUU_KEY_OK") else {
+                return Outcome(ok: false,
+                    message: "Key installed but key-only auth failed: \(verify.output.suffix(180))")
             }
-            return Outcome(ok: false,
-                           message: "Pubkey installed but key auth verification failed: \(verify.output.suffix(300))")
+            JailbreakConfigStore.shared.linked = true
+            return Outcome(ok: true, message: "Linked (key auth).")
         } catch {
             return Outcome(ok: false, message: "Link error: \(error.localizedDescription)")
         }
