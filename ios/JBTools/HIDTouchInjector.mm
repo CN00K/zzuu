@@ -481,10 +481,12 @@ static int fingerIds[] = {2, 3, 4, 5, 1, 6, 7, 8, 9};
         NSNumber *usage = map[key];
         if (!usage) continue;
         BOOL shift = [key characterAtIndex:0] >= 'A' && [key characterAtIndex:0] <= 'Z';
-        if (shift) [self _keyDown:22 usage:0];  // left shift down (0xE1 = 225? no, 224)
+        const UInt32 kHIDUsage_KeyboardLeftShift = 0xE1;
+        if (shift) [self _keyDown:kHIDPage_KeyboardOrKeypad usage:kHIDUsage_KeyboardLeftShift];
         [self _keyDown:kHIDPage_KeyboardOrKeypad usage:usage.unsignedIntValue];
         [NSThread sleepForTimeInterval:0.02];
-        if (shift) [self _keyUp:22];            // left shift up
+        [self _keyUp:usage.unsignedIntValue];
+        if (shift) [self _keyUp:kHIDUsage_KeyboardLeftShift];
     }
 }
 
