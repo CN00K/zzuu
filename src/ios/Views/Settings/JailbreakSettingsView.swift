@@ -77,6 +77,9 @@ struct JailbreakSettingsView: View {
                 .disabled(busy || !cfg.linked)
             }
             if cfg.linked {
+                ScreenControlPanel()
+            }
+            if cfg.linked {
                 Section("What this enables") {
                     Text("root_execute: run commands on the jailbroken device as root (frida, dpkg, system logs, class-dump).")
                         .font(.footnote)
@@ -219,6 +222,153 @@ enum JBLinker {
             return Outcome(ok: true, message: "Linked (key auth).")
         } catch {
             return Outcome(ok: false, message: "Link error: \(error.localizedDescription)")
+        }
+    }
+}
+
+
+// MARK: - Screen Control Panel
+//
+// [zzuu-jb] Manual UI for screen_control + ui_dump. Same transport as the
+// agent tools (root SSH -> exec the zzuu binary with --zzuu-hid/--zzuu-uidump)
+// so what works here works in chat and vice versa.
+struct ScreenControlPanel: View {
+    @State private var bundleID = ""
+    @State private var xText = "200"
+    @State private var yText = "400"
+    @State private var x2Text = "200"
+    @State private var y2Text = "150"
+    @State private var durText = "0.3"
+    @State private var busy = false
+    @State private var result: String?
+    @State private var showResult = false
+
+    var body: some View {
+        Section("Screen Control") {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading) {
+                    Text("Bundle ID (empty = self)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    TextField("com.apple.mobilesafari", text: $bundleID)
+                        .font(.footnote)
+                        .autocorrectionDisabled()
+                        .keyboardType(.asciiCapable)
+                }
+                Button {
+                    runDump()
+                } label: {
+                    if busy { ProgressView() } else { Label("Dump UI", systemImage: "tree") }
+                }
+                .disabled(busy)
+            }
+
+            HStack(spacing: 8) {
+                coordField("x", $xText)
+                coordField("y", $yText)
+            }
+            HStack(spacing: 8) {
+                Button { runHID("tap") } label: { Label("Tap", systemImage: "hand.tap") }
+                    .buttonStyle(.bordered)
+                Button { runHID("double_tap") } label: { Label("2x", systemImage: "hand.tap.fill") }
+                    .buttonStyle(.bordered)
+                Button { runHID("long_press") } label: { Label("Hold", systemImage: "hand.point.up.left") }
+                    .buttonStyle(.bordered)
+                Button { runHID("home") } label: { Label("Home", systemImage: "house") }
+                    .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                coordField("x2", $x2Text)
+                coordField("y2", $y2Text)
+                coordField("sec", $durText)
+                Button { runHID("swipe") } label: { Label("Swipe", systemImage: "arrow.left.and.right") }
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func coordField(_ placeholder: String, _ text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(placeholder).font(.caption2).foregroundStyle(.secondary)
+            TextField("", text: text)
+                .font(.footnote)
+                .keyboardType(.numbersAndPunctuation)
+                .frame(minWidth: 52)
+        }
+    }
+
+    private func findZZUUBinary() -> String {
+        """
+        BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "Minis" -type f 2>/dev/null | head -1)
+        if [ -z "$BIN" ]; then
+          BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*.app/Minis" -type f -perm +111 2>/dev/null | head -1)
+        fi
+        [ -z "$BIN" ] && { echo "ZZUU_BIN_NOT_FOUND"; exit 0; }
+        echo "$BIN"
+        """
+    }
+
+    private func runHID(_ action: String) {
+        busy = true
+        result = nil
+        Task {
+            do {
+                let payload: [String: Any] = [
+                    "action": action,
+                    "x": Double(xText) ?? 0,
+                    "y": Double(yText) ?? 0,
+                    "x2": Double(x2Text) ?? 0,
+                    "y2": Double(y2Text) ?? 0,
+                    "duration": Double(durText) ?? 0.3,
+                    "scale": 1.5,
+                    "text": "",
+                ]
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                let b64 = data.base64EncodedString()
+                let script = """
+                BIN=$(\(findZZUUBinary()))
+                case "$BIN" in *NOT_FOUND*) echo "ZZUU_BIN_NOT_FOUND"; exit 0;; esac
+                "$BIN" --zzuu-hid '\(b64)' 2>&1 || echo "HID_RUN_FAILED"
+                """
+                let r = try await JailbreakRunner.run(script)
+                result = r.output.isEmpty ? "(no output)" : r.output
+                showResult = true
+            } catch {
+                result = "Error: \(error.localizedDescription)"
+                showResult = true
+            }
+            busy = false
+        }
+    }
+
+    private func runDump() {
+        busy = true
+        result = nil
+        Task {
+            do {
+                let payload: [String: Any] = [
+                    "bundle_id": bundleID,
+                    "max_depth": 12,
+                ]
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                let b64 = data.base64EncodedString()
+                let script = """
+                BIN=$(\(findZZUUBinary()))
+                case "$BIN" in *NOT_FOUND*) echo "ZZUU_BIN_NOT_FOUND"; exit 0;; esac
+                "$BIN" --zzuu-uidump '\(b64)' 2>&1 | head -c 60000 || echo "UIDUMP_FAILED"
+                """
+                let r = try await JailbreakRunner.run(script)
+                var out = r.output
+                if let jsonStart = out.range(of: "{\"windows\"") {
+                    out = String(out[jsonStart.lowerBound...])
+                }
+                result = out.count > 60000 ? String(out.prefix(60000)) + "\n…[truncated]" : out
+                showResult = true
+            } catch {
+                result = "Error: \(error.localizedDescription)"
+                showResult = true
+            }
+            busy = false
         }
     }
 }
