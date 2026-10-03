@@ -199,6 +199,41 @@ extension AIChatViewModel {
             ))
         }
 
+        // [zzuu-theosgui] Decrypted-app list, process picker, dylib inject —
+        // ported from TheosGUI's tool surface. Gated on Jailbreak SSH.
+        if JailbreakConfigStore.shared.isConfigured {
+            tools.append(AgentToolDefinition(
+                name: "decrypted_list",
+                description: "List already-decrypted app binaries on the jailbroken device (prior frida-ios-dump dumps + bundle scan showing which mains are FairPlay-encrypted). Use to pick a dump target.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary.")
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "process_list",
+                description: "List running processes on the jailbroken device with PIDs. Use to pick a frida attach target or confirm an app is running.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "keyword": AgentToolParam(type: .string, description: "Optional filter (process name substring).")
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "keyword"]
+            ))
+            tools.append(AgentToolDefinition(
+                name: "dylib_inject",
+                description: "Inject a dylib into an app's main binary on the jailbroken device (adds LC_LOAD_DYLIB + re-signs). DANGEROUS: modifies the target app binary. Only when the user asked.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary."),
+                    "bundle_id": AgentToolParam(type: .string, description: "Target app bundle id."),
+                    "dylib_path": AgentToolParam(type: .string, description: "Absolute device path of the dylib (must exist on the device).")
+                ],
+                required: ["tool_title", "bundle_id", "dylib_path"],
+                propertyOrdering: ["tool_title", "bundle_id", "dylib_path"]
+            ))
+        }
+
         // [zzuu-jb] root_execute: run commands on the jailbroken iOS host via
         // OpenSSH (root). Only advertised when Settings > Jailbreak SSH is
         // configured; otherwise the model never learns the tool exists.

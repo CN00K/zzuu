@@ -410,6 +410,14 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
                existing.version >= BundledRESkills.version { continue }
             _ = try? importSkill(content: content, source: .bundled)
         }
+
+        // [zzuu-community] 71 community RE/pentest skills (user-uploaded packs).
+        for (name, content) in BundledCommunitySkills.skills {
+            let id = Self.slugify(name)
+            if let existing = skills.first(where: { $0.id == id }),
+               existing.version >= BundledCommunitySkills.version { continue }
+            _ = try? importSkill(content: content, source: .bundled)
+        }
     }
 
     // MARK: - One-time Migration: re-sync skills with bundled files

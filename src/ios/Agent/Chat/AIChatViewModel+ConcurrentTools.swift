@@ -490,6 +490,104 @@ extension AIChatViewModel {
                 toolSuccess = false
             }
             break
+        case "decrypted_list":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            do {
+                let script = """
+                echo "=== Prior dumps (/var/mobile/zzuu_dumps) ==="
+                ls -la /var/mobile/zzuu_dumps/ 2>/dev/null || echo "(none)"
+                echo ""
+                echo "=== Bundle mains ==="
+                for APP in /var/containers/Bundle/Application/*/; do
+                  PLIST=$(find "$APP" -maxdepth 2 -name "Info.plist" 2>/dev/null | head -1)
+                  [ -z "$PLIST" ] && continue
+                  BID=$(defaults read "$PLIST" CFBundleIdentifier 2>/dev/null)
+                  BIN=$(defaults read "$PLIST" CFBundleExecutable 2>/dev/null)
+                  MAIN="$APP$BIN"
+                  [ -f "$MAIN" ] || continue
+                  echo "$BID|$BIN"
+                done 2>/dev/null | head -40
+                """
+                let r = try await executeRootCommand(script, timeout: 120) { _ in }
+                toolOutput = r.output.isEmpty ? "(no apps found)" : r.output
+                toolSuccess = true
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "process_list":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let plKeyword = (toolArgs["keyword"] as? String) ?? ""
+            do {
+                let cmd = plKeyword.isEmpty
+                    ? "ps aux | head -40"
+                    : "ps aux | grep -i '\(plKeyword)' | grep -v grep | head -30"
+                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
+                toolOutput = r.output.isEmpty ? "(no matching processes)" : r.output
+                toolSuccess = true
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
+        case "dylib_inject":
+            guard JailbreakConfigStore.shared.isConfigured else {
+                toolOutput = "Error: Jailbreak SSH is not configured."
+                toolSuccess = false
+                break
+            }
+            let diBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let diDylib = (toolArgs["dylib_path"] as? String) ?? ""
+            guard !diBid.isEmpty, !diDylib.isEmpty else {
+                toolOutput = "Error: Missing required 'bundle_id' or 'dylib_path'."
+                toolSuccess = false
+                break
+            }
+            do {
+                let script = """
+                APP=$(find /var/containers/Bundle/Application -maxdepth 3 -name "*.app" 2>/dev/null | while read A; do
+                  BID=$(defaults read "$A/Info.plist" CFBundleIdentifier 2>/dev/null)
+                  [ "$BID" = "\(diBid)" ] && echo "$A" && break
+                done | head -1)
+                [ -z "$APP" ] && { echo "APP_NOT_FOUND"; exit 0; }
+                BIN=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null)
+                MAIN="$APP$BIN"
+                [ -f "$MAIN" ] || { echo "MAIN_MISSING"; exit 0; }
+                [ -f "\(diDylib)" ] || { echo "DYLIB_MISSING"; exit 0; }
+                which optool >/dev/null 2>&1 && optool install -c load -p '\(diDylib)' -t "$MAIN" && echo "INJECT_OK" || echo "INJECT_NEED_OPTOOL"
+                ldid -S "$MAIN" 2>/dev/null && echo "RESIGNED"
+                """
+                let r = try await executeRootCommand(script, timeout: 120) { _ in }
+                if r.output.contains("APP_NOT_FOUND") {
+                    toolOutput = "Error: app \(diBid) not found on the device."
+                    toolSuccess = false
+                } else if r.output.contains("DYLIB_MISSING") {
+                    toolOutput = "Error: dylib \(diDylib) does not exist on the device."
+                    toolSuccess = false
+                } else if r.output.contains("INJECT_OK") {
+                    toolOutput = "Injected \(diDylib) into \(diBid).\n\(r.output)"
+                    toolSuccess = true
+                } else if r.output.contains("INJECT_NEED_OPTOOL") {
+                    toolOutput = "optool not installed on the device. Compile it via the re-ios-triage skill bootstrap, or use frida-based injection instead."
+                    toolSuccess = false
+                } else {
+                    toolOutput = "Inject result:\n\(r.output)"
+                    toolSuccess = false
+                }
+            } catch {
+                toolOutput = "Error: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+            break
         case "root_execute":
             guard JailbreakConfigStore.shared.isConfigured else {
                 toolOutput = "Error: Jailbreak SSH is not configured. Ask the user to set host/port/user/password under Settings > Jailbreak SSH."
