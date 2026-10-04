@@ -11,6 +11,7 @@
 
 #import <UIKit/UIKit.h>
 #import <mach/mach_time.h>
+#import <mach/mach.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
 
@@ -174,12 +175,7 @@ static int fingerIds[] = {2, 3, 4, 5, 1, 6, 7, 8, 9};
 }
 
 - (CGSize)screenSize {
-    CGSize s = [UIScreen mainScreen].bounds.size;
-    if (@available(iOS 13.0, *)) {
-        UIWindowScene *scene = [UIApplication sharedApplication].connectedScenes.anyObject;
-        if (scene) s = scene.screen.bounds.size;
-    }
-    return s;
+    return [UIScreen mainScreen].bounds.size;
 }
 
 - (void)_send:(IOHIDEventRef)event {
