@@ -646,7 +646,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		796D77E55E885E514FFB0C0D /* REWorkbenchView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = "REWorkbenchView.swift"; name = "REWorkbenchView.swift"; path = "Views/Settings/REWorkbenchView.swift"; sourceTree = "<group>"; };
+		796D77E55E885E514FFB0C0D /* REWorkbenchView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = "REWorkbenchView.swift"; path = "Views/Settings/REWorkbenchView.swift"; sourceTree = SOURCE_ROOT; };
 		6483A8FB10223867927E8A85 /* HIDBridgeMain.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = "HIDBridgeMain.swift"; path = "HIDBridgeMain.swift"; sourceTree = "<group>"; };
 		4D7673C93F3AB8200899679D /* UIDumpInjector.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = "UIDumpInjector.mm"; path = "UIDumpInjector.mm"; sourceTree = "<group>"; };
 		4F92E70B66F3475A1C0A0FCD /* UIDumpInjector.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = "UIDumpInjector.h"; path = "UIDumpInjector.h"; sourceTree = "<group>"; };
