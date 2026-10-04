@@ -585,35 +585,22 @@ extension AIChatViewModel {
             }
             break
         case "resign_ipa":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let riPath = (toolArgs["path"] as? String) ?? ""
             guard !riPath.isEmpty else {
-                toolOutput = "Error: Missing required 'path'."
+                toolOutput = "Error: Missing 'path'."
                 toolSuccess = false
                 break
             }
-            do {
-                let r = try await executeRootCommand(
-                    "which ldid >/dev/null 2>&1 && ldid -S '\(riPath)' && echo RESIGN_OK || { echo LDID_MISSING; which ldid; }",
-                    timeout: 120) { _ in }
-                if r.output.contains("LDID_MISSING") {
-                    toolOutput = "ldid not installed on the device. Install via Sileo (package: ldid) or compile via re-ios-triage bootstrap."
-                    toolSuccess = false
-                } else if r.output.contains("RESIGN_OK") {
-                    toolOutput = "Re-signed \(riPath) (fake signature, TrollStore-compatible)."
-                    toolSuccess = true
-                } else {
-                    toolOutput = "Re-sign result:\n\(r.output)"
-                    toolSuccess = false
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            let ldidCandidates = ["/usr/bin/ldid", "/usr/local/bin/ldid", "/opt/ldid"]
+            let ld = ldidCandidates.first { FileManager.default.fileExists(atPath: $0) }
+            guard let ldidBin = ld else {
+                toolOutput = "ldid not found in sandbox. Install via: apk add ldid (iSH shell)."
                 toolSuccess = false
+                break
             }
+            DirectKit.spawnDetached(ldidBin, args: ["-S", riPath])
+            toolOutput = "RESIGNED: " + riPath
+            toolSuccess = true
             break
         case "macho_info":
             let miPath = (toolArgs["path"] as? String) ?? ""
@@ -660,33 +647,23 @@ extension AIChatViewModel {
             }
             break
         case "theos_build":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            let tbProject = (toolArgs["project_path"] as? String) ?? ""
+            let tbFinal = (toolArgs["final"] as? NSNumber)?.boolValue ?? false
+            guard !tbProject.isEmpty else {
+                toolOutput = "Error: Missing 'project_path'."
                 toolSuccess = false
                 break
             }
-            let tbDir = (toolArgs["project_dir"] as? String) ?? ""
-            guard !tbDir.isEmpty else {
-                toolOutput = "Error: Missing required 'project_dir'."
+            let makeCandidates = ["/usr/bin/make", "/usr/local/bin/make"]
+            let mk = makeCandidates.first { FileManager.default.fileExists(atPath: $0) }
+            guard let make = mk else {
+                toolOutput = "make not found in sandbox. Install Theos in iSH first."
                 toolSuccess = false
                 break
             }
-            do {
-                // Use the minis-re-build CLI in the sandbox (GitHub Actions build).
-                let r = try await executeRootCommand(
-                    "minis-re-build '\(tbDir)' '\(tbDir).deb' 2>&1 || echo BUILD_FAILED",
-                    timeout: 600) { line in }
-                if r.output.contains("BUILD_FAILED") {
-                    toolOutput = "Build failed.\n\(r.output)"
-                    toolSuccess = false
-                } else {
-                    toolOutput = r.output
-                    toolSuccess = r.output.contains("[re-build] OK")
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
-            }
+            DirectKit.spawnDetached(make, args: ["-C", tbProject, tbFinal ? "package" : "all"])
+            toolOutput = "BUILD_DISPATCHED: " + tbProject
+            toolSuccess = true
             break
         case "screen_control":
             let scAction = (toolArgs["action"] as? String) ?? ""
