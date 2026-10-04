@@ -9,6 +9,29 @@ import MachO
 // Everything JailbreakRunner did over SSH is now a direct in-process call.
 // Single source of truth for all privileged operations.
 
+// iOS environ access (crt_externs.h has no modulemap)
+#if canImport(Darwin)
+@_silgen_name("_NSGetEnviron")
+private func _NSGetEnviron() -> UnsafeMutablePointer<UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?>?
+#endif
+
+/// Current environment in the posix_spawn expected form.
+private func iosEnviron() -> [UnsafeMutablePointer<CChar>?] {
+    #if canImport(Darwin)
+    guard let pp = _NSGetEnviron() else { return [nil] }
+    var out: [UnsafeMutablePointer<CChar>?] = []
+    var i = 0
+    while let e = pp.pointee[i] {
+        out.append(e)
+        i += 1
+    }
+    out.append(nil)
+    return out
+    #else
+    return [nil]
+    #endif
+}
+
 enum DirectKit {
 
     // MARK: - App enumeration
@@ -312,7 +335,8 @@ enum DirectKit {
         var argv: [String] = [path] + args
         let cArgs = argv.map { strdup($0) } + [nil]
         var pid: pid_t = 0
-        let r = posix_spawn(&pid, path, nil, nil, cArgs, environ)
+        // iOS: the `environ` global is not exported; fetch via _NSGetEnviron().
+        let r = posix_spawn(&pid, path, nil, nil, cArgs, iosEnviron())
         for p in cArgs where p != nil { free(p) }
         return r == 0
     }

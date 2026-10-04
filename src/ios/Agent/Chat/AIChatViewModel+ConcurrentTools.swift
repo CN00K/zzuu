@@ -680,6 +680,7 @@ extension AIChatViewModel {
             let scDur = (toolArgs["duration"] as? NSNumber)?.doubleValue ?? 0
             let scScale = (toolArgs["scale"] as? NSNumber)?.doubleValue ?? 1.5
             let scText = (toolArgs["text"] as? String) ?? ""
+            var scOK = true
             switch scAction {
             case "tap":        inj.tap(at: CGPoint(x: scX, y: scY))
             case "double_tap": inj.doubleTap(at: CGPoint(x: scX, y: scY))
@@ -689,15 +690,17 @@ extension AIChatViewModel {
             case "home":       inj.pressHomeButton()
             case "type_text":  inj.typeText(scText)
             default:
-                toolOutput = "Error: unknown action \(scAction)"
-                toolSuccess = false
-                break
+                scOK = false
             }
-            if toolSuccess == nil || toolSuccess == true {
+            if scOK {
                 toolOutput = "HID_OK \(scAction)"
                 toolSuccess = true
+            } else {
+                toolOutput = "Error: unknown action \(scAction)"
+                toolSuccess = false
             }
             break
+
         case "ui_dump":
             let udBid = (toolArgs["bundle_id"] as? String) ?? ""
             let udDepth = (toolArgs["max_depth"] as? NSNumber)?.intValue ?? 12

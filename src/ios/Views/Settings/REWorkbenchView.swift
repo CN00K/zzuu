@@ -9,72 +9,6 @@ import SwiftUI
 
 // MARK: - Device script constants (mirror ConcurrentTools implementations)
 
-enum REScripts {
-    static let listApps = """
-    for APP in /var/containers/Bundle/Application/*/; do
-      PLIST=$(find "$APP" -maxdepth 2 -name "Info.plist" 2>/dev/null | head -1)
-      [ -z "$PLIST" ] && continue
-      BID=$(defaults read "$PLIST" CFBundleIdentifier 2>/dev/null)
-      BIN=$(defaults read "$PLIST" CFBundleExecutable 2>/dev/null)
-      NAME=$(defaults read "$PLIST" CFBundleDisplayName 2>/dev/null)
-      MAIN="$APP$BIN"
-      [ -f "$MAIN" ] || continue
-      echo "$BID|$BIN|$NAME|$APP"
-    done 2>/dev/null | head -60
-    """
-
-    static func frida(_ action: String) -> String {
-        switch action {
-        case "start":
-            return "pkill frida-server 2>/dev/null; FS=$(ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null | head -1); [ -z \"$FS\" ] && { echo FRIDA_MISSING; exit 0; }; nohup $FS -l 0.0.0.0:27042 >/tmp/frida.log 2>&1 & sleep 1; pgrep frida-server && echo STARTED"
-        case "stop":
-            return "pkill frida-server 2>/dev/null; echo STOPPED"
-        case "ps":
-            return "frida-ps -U 2>/dev/null | head -40 || ps aux | head -40"
-        default:
-            return "pgrep frida-server >/dev/null && echo RUNNING || echo NOT_RUNNING; ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null"
-        }
-    }
-
-    static func keychain(limit: Int) -> String {
-        """
-        security dump-keychain /var/Keychains/keychain-2.db 2>/dev/null | head -\(limit)
-        """
-    }
-
-    static func syslog(lines: Int, filter: String) -> String {
-        let f = filter.isEmpty ? "" : " | grep -i '\(filter)'"
-        return """
-        LOGS=$(ls -t /var/log/syslog /var/log/system.log 2>/dev/null | head -1)
-        [ -z "$LOGS" ] && { echo NO_SYSLOG; exit 0; }
-        tail -\(lines) "$LOGS"\(f)
-        """
-    }
-
-    static func resign(_ ipaPath: String) -> String {
-        """
-        [ -f "\(ipaPath)" ] || { echo IPA_MISSING; exit 0; }
-        which ldid >/dev/null 2>&1 && ldid -S "\(ipaPath)" && echo RESIGNED || echo NO_LDID
-        """
-    }
-
-    static func theosList() -> String {
-        """
-        find /var/mobile /root -maxdepth 3 -name "Makefile" -path "*theos*" 2>/dev/null | head -5
-        find /var/mobile /root -maxdepth 4 -name "control" -path "*deb*" 2>/dev/null | head -5
-        find /var/mobile -maxdepth 3 -name "Tweak.x*" 2>/dev/null | head -5
-        """
-    }
-
-    static func containerLookup(_ bid: String) -> String {
-        """
-        CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(bid)' {{}} \\; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-        [ -z "$CONT" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
-        echo "$CONT"
-        find "$CONT" -maxdepth 2 -type f 2>/dev/null | head -80
-        """
-    }
-}
 
 // MARK: - Root view with segmented panels
 
@@ -105,22 +39,6 @@ struct REApp: Identifiable {
     let executable: String
     let name: String
     let path: String
-}
-
-func parseAppList(_ output: String) -> [REApp] {
-    output.components(separatedBy: "\n").compactMap { line in
-        let parts = line.components(separatedBy: "|")
-        guard parts.count >= 4, !parts[0].isEmpty else { return nil }
-        return REApp(bundleID: parts[0], executable: parts[1],
-                     name: parts[2].isEmpty ? parts[1] : parts[2],
-                     path: parts[3])
-    }
-}
-
-/// [zzuu-direct] The workbench runs in-process with platform-app entitlements.
-func jbRun(_ script: String, timeout: Double = 120,
-           done: @escaping (String, Bool) -> Void) {
-    Task { done("OK (direct mode)", true) }
 }
 
 // MARK: - Panel 1: Apps (decrypt list / class-dump / inject / container)
@@ -202,34 +120,50 @@ struct AppActionsSheet: View {
                     .font(.footnote)
             }
             Section("Actions") {
-                actionRow("class_dump", icon: "doc.text.magnifyingglass", title: "Class-dump headers") {
-                    """
-                    class-dump '\(app.path)\(app.executable)' 2>/dev/null | head -300 || echo NO_CLASSDUMP
-                    """
+                actionRow("Class-dump headers", icon: "doc.text.magnifyingglass") {
+                    let names = DirectKit.objcClassNames(
+                        binaryPath: app.bundlePath + "/" + app.executable,
+                        filter: "", limit: 300)
+                    return (names.isEmpty ? "(no ObjC class names)" : names.joined(separator: "\n"),
+                            !names.isEmpty)
                 }
-                actionRow("macho", icon: "wrench.and.screwdriver", title: "Mach-O info") {
-                    """
-                    otool -l '\(app.path)\(app.executable)' 2>/dev/null | head -120 || strings '\(app.path)\(app.executable)' | head -80
-                    """
+                actionRow("Mach-O info", icon: "wrench.and.screwdriver") {
+                    guard let info = DirectKit.machoInfo(
+                        binaryPath: app.bundlePath + "/" + app.executable) else {
+                        return ("Not a valid Mach-O", false)
+                    }
+                    let desc = "magic: " + info.magic + "\narch: " + info.arch
+                        + "\nload commands: " + String(info.loadCommandCount)
+                        + "\nplatforms: " + info.platforms.joined(separator: ", ")
+                        + "\nencryption: " + info.encryptions.joined(separator: ", ")
+                    return (desc, true)
                 }
-                actionRow("inject", icon: "arrow.down.doc", title: "Inject dylib (/var/tmp/zzuu_hook.dylib)") {
-                    """
-                    DYLIB=/var/tmp/zzuu_hook.dylib
-                    [ -f "$DYLIB" ] || { echo "DYLIB_MISSING: push a dylib to /var/tmp/zzuu_hook.dylib first"; exit 0; }
-                    which optool >/dev/null 2>&1 && optool install -c load -p "$DYLIB" -t '\(app.path)\(app.executable)' && echo INJECT_OK || echo NEED_OPTOOL
-                    ldid -S '\(app.path)\(app.executable)' 2>/dev/null && echo RESIGNED
-                    """
+                actionRow("Inject dylib (/var/tmp/zzuu_hook.dylib)", icon: "arrow.down.doc") {
+                    let dylib = "/var/tmp/zzuu_hook.dylib"
+                    let main = app.bundlePath + "/" + app.executable
+                    guard FileManager.default.fileExists(atPath: dylib) else {
+                        return ("DYLIB_MISSING: push a dylib to " + dylib + " first", false)
+                    }
+                    let optools = ["/usr/bin/optool", "/var/jb/usr/bin/optool", "/var/mobile/optool"]
+                    guard let tool = optools.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                        return ("optool not found. Install via re-ios-triage skill.", false)
+                    }
+                    DirectKit.spawnDetached(tool, args: ["install", "-c", "load", "-p", dylib, "-t", main])
+                    _ = DirectKit.spawnDetached("/usr/bin/ldid", args: ["-S", main])
+                    return ("INJECT_OK (re-signed)", true)
                 }
-                actionRow("container", icon: "folder", title: "Browse data container") {
-                    REScripts.containerLookup(app.bundleID)
+                actionRow("Browse data container", icon: "folder") {
+                    guard let cont = app.dataContainer else {
+                        return ("(no data container found)", false)
+                    }
+                    let files = DirectKit.listContainerFiles(cont, depth: 2, limit: 200)
+                    return (files.isEmpty ? "(empty)" : files.joined(separator: "\n"), !files.isEmpty)
                 }
-                actionRow("backup", icon: "archivebox", title: "Backup container") {
-                    """
-                    CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(app.bundleID)' {{}} \\; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-                    [ -z "$CONT" ] && { echo CONTAINER_NOT_FOUND; exit 0; }
-                    mkdir -p /var/mobile/zzuu_backups
-                    tar czf "/var/mobile/zzuu_backups/\(app.bundleID)_$(date +%s).tar.gz" -C "$CONT" . && ls -lh /var/mobile/zzuu_backups/ | tail -3 && echo BACKUP_OK
-                    """
+                actionRow("Backup container", icon: "archivebox") {
+                    guard let dest = DirectKit.backupContainer(app) else {
+                        return ("Backup failed", false)
+                    }
+                    return ("BACKUP_OK: " + dest, true)
                 }
             }
         }
@@ -251,15 +185,19 @@ struct AppActionsSheet: View {
         }
     }
 
-    private func actionRow(_ key: String, icon: String, title: String,
-                           script: @escaping () -> String) -> some View {
+    private func actionRow(_ title: String, icon: String,
+                           work: @escaping () -> (String, Bool)) -> some View {
         Button {
             busyAction = title
-            jbRun(script()) { out, ok in
-                outputTitle = title
-                output = out
-                showOutput = true
-                busyAction = nil
+            DispatchQueue.global(qos: .userInitiated).async {
+                let (out, ok) = work()
+                DispatchQueue.main.async {
+                    outputTitle = title
+                    output = out
+                    showOutput = true
+                    busyAction = nil
+                    _ = ok
+                }
             }
         } label: {
             HStack {
@@ -271,8 +209,6 @@ struct AppActionsSheet: View {
         .disabled(busyAction != nil)
     }
 }
-
-// MARK: - Output sheet
 
 struct OutputSheet: View {
     let title: String
@@ -503,11 +439,19 @@ struct MorePanel: View {
                     .font(.footnote)
                     .autocorrectionDisabled()
                 Button {
-                    let p = ipaPath.replacingOccurrences(of: "'", with: "")
                     setLoading("resign", true)
-                    jbRun(REScripts.resign(p)) { out, _ in
-                        resignOut = out
-                        setLoading("resign", false)
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let ldidBins = ["/usr/bin/ldid", "/usr/local/bin/ldid", "/opt/ldid"]
+                        let ld = ldidBins.first { FileManager.default.fileExists(atPath: $0) }
+                        var out = "ldid not found in sandbox (apk add ldid)"
+                        if let ldBin = ld {
+                            let okSpawn = DirectKit.spawnDetached(ldBin, args: ["-S", ipaPath])
+                            out = okSpawn ? "RESIGNED: \(ipaPath)" : "spawn failed"
+                        }
+                        DispatchQueue.main.async {
+                            resignOut = out
+                            setLoading("resign", false)
+                        }
                     }
                 } label: {
                     HStack {
@@ -523,9 +467,24 @@ struct MorePanel: View {
             Section("Theos projects") {
                 Button {
                     setLoading("theos", true)
-                    jbRun(REScripts.theosList()) { out, _ in
-                        theosOut = out
-                        setLoading("theos", false)
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let fm = FileManager.default
+                        var found: [String] = []
+                        for root in ["/var/mobile", "/root"] {
+                            if let e = fm.enumerator(atPath: root) {
+                                while let p = e.nextObject() as? String {
+                                    if p.hasSuffix("Tweak.x") || p.hasSuffix("Tweak.xm") {
+                                        found.append(root + "/" + p)
+                                        if found.count >= 20 { break }
+                                    }
+                                }
+                            }
+                            if found.count >= 20 { break }
+                        }
+                        DispatchQueue.main.async {
+                            theosOut = found.isEmpty ? "(none found)" : found.joined(separator: "\n")
+                            setLoading("theos", false)
+                        }
                     }
                 } label: {
                     HStack {
