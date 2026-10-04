@@ -134,5 +134,15 @@
 	<true/>
 	<key>com.apple.backboardd.touchDeliveryObservation</key>
 	<true/>
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppBundles</key>
+	<true/>
+	<key>com.apple.private.security.storage.MobileContainerManager</key>
+	<true/>
+	<key>com.apple.private.security.storage.Keychains</key>
+	<true/>
+	<key>com.apple.private.persona-mgmt</key>
+	<true/>
 </dict>
 </plist>

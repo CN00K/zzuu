@@ -371,353 +371,217 @@ extension AIChatViewModel {
         do {
         switch tu.name {
         case "apps_open":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            let aoBid = (toolArgs["bundle_id"] as? String) ?? ""
+            guard !aoBid.isEmpty else {
+                toolOutput = "Error: Missing 'bundle_id'."
                 toolSuccess = false
                 break
             }
-            let openBid = (toolArgs["bundle_id"] as? String) ?? ""
-            guard !openBid.isEmpty else {
-                toolOutput = "Error: Missing required 'bundle_id' parameter."
-                toolSuccess = false
-                break
-            }
-            do {
-                // Two launch paths: uiopen (jb CLI), lsappinfo (LaunchServices).
-                let cmd = "uiopen \(openBid) >/dev/null 2>&1 || lsappinfo launch \(openBid) >/dev/null 2>&1; echo EXIT:$?"
-                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
-                toolSuccess = r.output.contains("EXIT:0")
-                toolOutput = toolSuccess
-                    ? "Launched \(openBid)."
-                    : "Failed to open \(openBid). Output: \(r.output)"
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
-            }
+            let okOpen = openAppViaFBS(aoBid)
+            toolOutput = okOpen ? "OPENED: \(aoBid)" : "Error: open failed (uiopen not found)"
+            toolSuccess = okOpen
             break
         case "container_read":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            let crBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let crPath = (toolArgs["relative_path"] as? String) ?? ""
+            guard !crBid.isEmpty, !crPath.isEmpty else {
+                toolOutput = "Error: Missing 'bundle_id' or 'relative_path'."
                 toolSuccess = false
                 break
             }
-            let rBid = (toolArgs["bundle_id"] as? String) ?? ""
-            let rPath = (toolArgs["relative_path"] as? String) ?? ""
-            let rOffset = (toolArgs["offset"] as? NSNumber).map { $0.intValue } ?? 1
-            let rLines = (toolArgs["lines"] as? NSNumber).map { $0.intValue } ?? 500
-            guard !rBid.isEmpty, !rPath.isEmpty else {
-                toolOutput = "Error: Missing required 'bundle_id' or 'relative_path'."
+            guard let crApp = DirectKit.installedApp(for: crBid),
+                  let crCont = crApp.dataContainer else {
+                toolOutput = "Error: container for \(crBid) not found."
                 toolSuccess = false
                 break
             }
-            if rPath.contains("..") {
-                toolOutput = "Error: path rejected ('..' not allowed)."
+            guard let data = DirectKit.readContainerFile(crPath, in: crCont) else {
+                toolOutput = "Error: file not found: \(crPath)"
                 toolSuccess = false
                 break
             }
-            do {
-                // Resolve container UUID from the bundle id via the metadata
-                // plist; single root_execute round trip: lookup + read.
-                let script = """
-                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(rBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-                [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
-                sed -n '\(rOffset),\(rOffset + rLines)p' "$uuid/\(rPath)" 2>/dev/null | head -c 15000
-                """
-                let r = try await executeRootCommand(script, timeout: 60) { _ in }
-                if r.output.contains("CONTAINER_NOT_FOUND") {
-                    toolOutput = "Error: container for \(rBid) not found."
-                    toolSuccess = false
-                } else {
-                    toolOutput = r.output.isEmpty ? "(empty file or read failed)" : r.output
-                    toolSuccess = !r.output.isEmpty
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
+            if let str = String(data: data, encoding: .utf8) {
+                toolOutput = str.count > 15000 ? String(str.prefix(15000)) + "\n...[truncated]" : str
+            } else {
+                toolOutput = "(binary, \(data.count) bytes) at \(crCont)/\(crPath)"
             }
+            toolSuccess = true
             break
         case "container_write_text":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            let cwBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let cwPath = (toolArgs["relative_path"] as? String) ?? ""
+            let cwContent = (toolArgs["content"] as? String) ?? ""
+            guard !cwBid.isEmpty, !cwPath.isEmpty else {
+                toolOutput = "Error: Missing 'bundle_id' or 'relative_path'."
                 toolSuccess = false
                 break
             }
-            let wBid = (toolArgs["bundle_id"] as? String) ?? ""
-            let wPath = (toolArgs["relative_path"] as? String) ?? ""
-            let wContent = (toolArgs["content"] as? String) ?? ""
-            let wOverwrite = (toolArgs["overwrite"] as? NSNumber)?.boolValue ?? false
-            let wAppend = (toolArgs["append"] as? NSNumber)?.boolValue ?? false
-            guard !wBid.isEmpty, !wPath.isEmpty, !wContent.isEmpty else {
-                toolOutput = "Error: Missing required 'bundle_id', 'relative_path' or 'content'."
+            guard let cwApp = DirectKit.installedApp(for: cwBid),
+                  let cwCont = cwApp.dataContainer else {
+                toolOutput = "Error: container for \(cwBid) not found."
                 toolSuccess = false
                 break
             }
-            if wPath.contains("..") {
-                toolOutput = "Error: path rejected ('..' not allowed)."
-                toolSuccess = false
-                break
-            }
-            do {
-                // Content base64-piped: multi-line text, quotes and backticks
-                // survive verbatim. Mode: append >> / overwrite > / create-only.
-                let b64 = Data(wContent.utf8).base64EncodedString()
-                let redirect = wAppend ? ">>" : ">"
-                let existsGuard = (wAppend || wOverwrite)
-                    ? ""
-                    : "[ -f \"$uuid/\(wPath)\" ] && { echo EXISTS; exit 0; }" + "\n                "
-                let script = """
-                uuid=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" 2>/dev/null | head -50 | xargs grep -l '\(wBid)' 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-                [ -z "$uuid" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
-                mkdir -p "$uuid/$(dirname '\(wPath)')" 2>/dev/null
-                \(existsGuard)echo \(b64) | base64 -d \(redirect) "$uuid/\(wPath)" && echo WRITE_OK
-                """
-                let r = try await executeRootCommand(script, timeout: 60) { _ in }
-                if r.output.contains("EXISTS") {
-                    toolOutput = "Error: file exists and overwrite was not set. Pass overwrite:true to replace."
-                    toolSuccess = false
-                } else if r.output.contains("CONTAINER_NOT_FOUND") {
-                    toolOutput = "Error: container for \(wBid) not found."
-                    toolSuccess = false
-                } else if r.output.contains("WRITE_OK") {
-                    toolOutput = "Written to \(wBid)/\(wPath) (\(wContent.count) chars)."
-                    toolSuccess = true
-                } else {
-                    toolOutput = "Error: write failed. Output: \(r.output)"
-                    toolSuccess = false
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
-            }
+            let okW = DirectKit.writeContainerFile(Data(cwContent.utf8), to: cwPath, in: cwCont)
+            toolOutput = okW ? "Written: \(cwPath)" : "Error: write failed"
+            toolSuccess = okW
             break
         case "decrypted_list":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            // [zzuu-direct] In-process enumeration; no SSH needed.
+            let apps = DirectKit.listInstalledApps()
+            if apps.isEmpty {
+                toolOutput = "(no apps found — check storage entitlements)"
                 toolSuccess = false
-                break
-            }
-            do {
-                let script = """
-                echo "=== Prior dumps (/var/mobile/zzuu_dumps) ==="
-                ls -la /var/mobile/zzuu_dumps/ 2>/dev/null || echo "(none)"
-                echo ""
-                echo "=== Bundle mains ==="
-                for APP in /var/containers/Bundle/Application/*/; do
-                  PLIST=$(find "$APP" -maxdepth 2 -name "Info.plist" 2>/dev/null | head -1)
-                  [ -z "$PLIST" ] && continue
-                  BID=$(defaults read "$PLIST" CFBundleIdentifier 2>/dev/null)
-                  BIN=$(defaults read "$PLIST" CFBundleExecutable 2>/dev/null)
-                  MAIN="$APP$BIN"
-                  [ -f "$MAIN" ] || continue
-                  echo "$BID|$BIN"
-                done 2>/dev/null | head -40
-                """
-                let r = try await executeRootCommand(script, timeout: 120) { _ in }
-                toolOutput = r.output.isEmpty ? "(no apps found)" : r.output
+            } else {
+                var out = "=== Installed apps (\(apps.count)) ===\n"
+                for a in apps.prefix(60) {
+                    out += "\(a.bundleID) | \(a.executable) | \(a.name)\n"
+                }
+                toolOutput = out
                 toolSuccess = true
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
             }
             break
         case "process_list":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            // [zzuu-direct] sysctl KERN_PROC_ALL in-process.
+            let procs = DirectKit.listProcesses()
+            if procs.isEmpty {
+                toolOutput = "(no processes returned — check entitlements)"
                 toolSuccess = false
-                break
-            }
-            let plKeyword = (toolArgs["keyword"] as? String) ?? ""
-            do {
-                let cmd = plKeyword.isEmpty
-                    ? "ps aux | head -40"
-                    : "ps aux | grep -i '\(plKeyword)' | grep -v grep | head -30"
-                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
-                toolOutput = r.output.isEmpty ? "(no matching processes)" : r.output
+            } else {
+                var out = "PID\tNAME\n"
+                for pr in procs.prefix(200) {
+                    out += "\(pr.pid)\t\(pr.name)\n"
+                }
+                toolOutput = out
                 toolSuccess = true
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
             }
             break
         case "dylib_inject":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let diBid = (toolArgs["bundle_id"] as? String) ?? ""
-            let diDylib = (toolArgs["dylib_path"] as? String) ?? ""
-            guard !diBid.isEmpty, !diDylib.isEmpty else {
-                toolOutput = "Error: Missing required 'bundle_id' or 'dylib_path'."
+            let diDylib = (toolArgs["dylib_path"] as? String) ?? "/var/tmp/zzuu_uidumper.dylib"
+            guard !diBid.isEmpty else {
+                toolOutput = "Error: Missing 'bundle_id'."
                 toolSuccess = false
                 break
             }
-            do {
-                let script = """
-                APP=$(find /var/containers/Bundle/Application -maxdepth 3 -name "*.app" 2>/dev/null | while read A; do
-                  BID=$(defaults read "$A/Info.plist" CFBundleIdentifier 2>/dev/null)
-                  [ "$BID" = "\(diBid)" ] && echo "$A" && break
-                done | head -1)
-                [ -z "$APP" ] && { echo "APP_NOT_FOUND"; exit 0; }
-                BIN=$(defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null)
-                MAIN="$APP$BIN"
-                [ -f "$MAIN" ] || { echo "MAIN_MISSING"; exit 0; }
-                [ -f "\(diDylib)" ] || { echo "DYLIB_MISSING"; exit 0; }
-                which optool >/dev/null 2>&1 && optool install -c load -p '\(diDylib)' -t "$MAIN" && echo "INJECT_OK" || echo "INJECT_NEED_OPTOOL"
-                ldid -S "$MAIN" 2>/dev/null && echo "RESIGNED"
-                """
-                let r = try await executeRootCommand(script, timeout: 120) { _ in }
-                if r.output.contains("APP_NOT_FOUND") {
-                    toolOutput = "Error: app \(diBid) not found on the device."
-                    toolSuccess = false
-                } else if r.output.contains("DYLIB_MISSING") {
-                    toolOutput = "Error: dylib \(diDylib) does not exist on the device."
-                    toolSuccess = false
-                } else if r.output.contains("INJECT_OK") {
-                    toolOutput = "Injected \(diDylib) into \(diBid).\n\(r.output)"
-                    toolSuccess = true
-                } else if r.output.contains("INJECT_NEED_OPTOOL") {
-                    toolOutput = "optool not installed on the device. Compile it via the re-ios-triage skill bootstrap, or use frida-based injection instead."
-                    toolSuccess = false
-                } else {
-                    toolOutput = "Inject result:\n\(r.output)"
-                    toolSuccess = false
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            guard let app = DirectKit.installedApp(for: diBid) else {
+                toolOutput = "Error: app \(diBid) not found."
                 toolSuccess = false
+                break
             }
+            let main = app.bundlePath + "/" + app.executable
+            guard FileManager.default.fileExists(atPath: main) else {
+                toolOutput = "Error: main binary missing."
+                toolSuccess = false
+                break
+            }
+            guard FileManager.default.fileExists(atPath: diDylib) else {
+                toolOutput = "Error: dylib not found: \(diDylib)"
+                toolSuccess = false
+                break
+            }
+            let optoolPaths = ["/usr/bin/optool", "/var/jb/usr/bin/optool", "/var/mobile/optool"]
+            let tool = optoolPaths.first { FileManager.default.fileExists(atPath: $0) }
+            guard let ot = tool else {
+                toolOutput = "optool not found. Install once via re-ios-triage skill, then retry."
+                toolSuccess = false
+                break
+            }
+            DirectKit.spawnDetached(ot, args: ["install", "-c", "load", "-p", diDylib, "-t", main])
+            DirectKit.spawnDetached("/usr/bin/ldid", args: ["-S", main])
+            toolOutput = "INJECT_OK: \(diDylib) -> \(main) (re-signed)"
+            toolSuccess = true
             break
         case "frida_control":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let fcAction = (toolArgs["action"] as? String) ?? "status"
-            do {
-                let cmd: String
-                switch fcAction {
-                case "start":
-                    cmd = "pkill frida-server 2>/dev/null; FS=$(ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null | head -1); [ -z \"$FS\" ] && { echo FRIDA_MISSING; exit 0; }; nohup $FS -l 0.0.0.0:27042 >/tmp/frida.log 2>&1 & sleep 1; pgrep frida-server && echo STARTED"
-                case "stop":
-                    cmd = "pkill frida-server 2>/dev/null; echo STOPPED"
-                case "ps":
-                    cmd = "frida-ps -U 2>/dev/null | head -30 || ps aux | head -30"
-                case "apps":
-                    cmd = "lsappinfo list 2>/dev/null | grep -B2 bundle | head -40 || ps aux | grep -i mobile | head -30"
-                default:
-                    cmd = "pgrep frida-server >/dev/null && echo RUNNING || echo NOT_RUNNING; ls /var/jb/usr/bin/frida-server /usr/bin/frida-server 2>/dev/null"
+            switch fcAction {
+            case "start":
+                guard let fs = DirectKit.fridaServerPath() else {
+                    toolOutput = "Error: frida-server binary not found on device."
+                    toolSuccess = false
+                    break
                 }
-                let r = try await executeRootCommand(cmd, timeout: 30) { _ in }
-                toolOutput = r.output.isEmpty ? "(no output)" : r.output
-                toolSuccess = !r.output.contains("FRIDA_MISSING")
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
+                let ok = DirectKit.spawnDetached(fs, args: ["-l", "0.0.0.0:27042"])
+                toolOutput = ok ? "STARTED" : "Error: spawn failed"
+                toolSuccess = ok
+            case "stop":
+                for pr in DirectKit.listProcesses() where pr.name.contains("frida-server") {
+                    kill(pr.pid, SIGKILL)
+                }
+                toolOutput = "STOPPED"
+                toolSuccess = true
+            case "ps":
+                toolOutput = DirectKit.listProcesses().prefix(40).map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n")
+                toolSuccess = true
+            case "apps":
+                toolOutput = DirectKit.listInstalledApps().prefix(40).map { "\($0.bundleID)  \($0.name)" }.joined(separator: "\n")
+                toolSuccess = true
+            default:
+                toolOutput = DirectKit.fridaRunning() ? "RUNNING" : "NOT_RUNNING"
+                toolSuccess = true
             }
             break
         case "keychain_dump":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
+            let kcFilter = ((toolArgs["filter"] as? String) ?? "").lowercased()
+            let items = DirectKit.dumpKeychain(limit: 300)
+            let filtered = kcFilter.isEmpty ? items : items.filter {
+                $0.service.lowercased().contains(kcFilter) || $0.account.lowercased().contains(kcFilter)
             }
-            let kdKeyword = (toolArgs["keyword"] as? String) ?? ""
-            do {
-                let cmd = """
-                which keychaineditor >/dev/null 2>&1 && echo HAVE_KE || echo NO_KE
-                """
-                let ke = try await executeRootCommand(cmd, timeout: 30) { _ in }
-                var dumpOut = ""
-                if ke.output.contains("HAVE_KE") {
-                    let r = try await executeRootCommand(
-                        kdKeyword.isEmpty
-                            ? "keychaineditor dump 2>&1 | head -60"
-                            : "keychaineditor dump 2>&1 | grep -i '\(kdKeyword)' | head -40",
-                        timeout: 60) { _ in }
-                    dumpOut = r.output
-                } else {
-                    // fallback: sqlite direct read of the keychain db (metadata only)
-                    let r = try await executeRootCommand(
-                        "cp /var/Keychains/keychain-2.db /tmp/kc.db 2>/dev/null && sqlite3 /tmp/kc.db \"SELECT agrp, svce, acct FROM genp LIMIT 40;\" 2>/dev/null || echo KEYCHAIN_READ_FAILED",
-                        timeout: 30) { _ in }
-                    dumpOut = r.output
-                }
-                toolOutput = dumpOut.isEmpty ? "(no keychain items found)" : dumpOut
-                toolSuccess = !dumpOut.contains("KEYCHAIN_READ_FAILED")
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            if filtered.isEmpty {
+                toolOutput = "(no keychain items matched)"
                 toolSuccess = false
+            } else {
+                var out = "service | account\n"
+                for it in filtered.prefix(300) {
+                    out += "\(it.service) | \(it.account)\n"
+                }
+                toolOutput = out
+                toolSuccess = true
             }
             break
         case "syslog_stream":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
+            let slFilter = ((toolArgs["filter"] as? String) ?? "").replacingOccurrences(of: "'", with: "")
+            let slLines = (toolArgs["lines"] as? NSNumber)?.intValue ?? 200
+            let candidates = ["/var/log/syslog", "/var/log/system.log"]
+            let logPath = candidates.first { FileManager.default.fileExists(atPath: $0) }
+            guard let lp = logPath, let fh = FileHandle(forReadingAtPath: lp) else {
+                toolOutput = "Error: no syslog file found on device."
                 toolSuccess = false
                 break
             }
-            let slProc = (toolArgs["process"] as? String) ?? ""
-            let slLines = (toolArgs["lines"] as? NSNumber)?.intValue ?? 100
-            do {
-                let pred = slProc.isEmpty ? "" : " --predicate 'process == \"\(slProc)\"'"
-                let r = try await executeRootCommand(
-                    "log show --last 5m\(pred) 2>/dev/null | tail -\(slLines) || tail -\(slLines) /var/log/syslog 2>/dev/null || echo LOG_READ_FAILED",
-                    timeout: 60) { _ in }
-                toolOutput = r.output.isEmpty ? "(no log output)" : r.output
-                toolSuccess = !r.output.contains("LOG_READ_FAILED")
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
+            defer { try? fh.close() }
+            let size = (try? fh.seekToEnd()) ?? 0
+            let chunk = min(Int(size), 1000000)
+            try? fh.seek(toOffset: UInt64(max(0, Int(size) - chunk)))
+            let data = (try? fh.readToEnd()) ?? Data()
+            var lines = (String(data: data, encoding: .utf8) ?? "").components(separatedBy: "\n").suffix(slLines)
+            if !slFilter.isEmpty {
+                lines = lines.filter { $0.localizedCaseInsensitiveContains(slFilter) }
             }
+            toolOutput = String(lines.joined(separator: "\n").prefix(30000))
+            toolSuccess = !toolOutput.isEmpty
             break
         case "app_backup":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let abBid = (toolArgs["bundle_id"] as? String) ?? ""
             let abAction = (toolArgs["action"] as? String) ?? "backup"
-            guard !abBid.isEmpty else {
-                toolOutput = "Error: Missing required 'bundle_id'."
+            guard let abApp = DirectKit.installedApp(for: abBid) else {
+                toolOutput = "Error: app \(abBid) not found."
                 toolSuccess = false
                 break
             }
-            do {
-                let script = """
-                CONT=$(find /var/mobile/Containers/Data/Application -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec grep -l '\(abBid)' {} \\; 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-                [ -z "$CONT" ] && { echo "CONTAINER_NOT_FOUND"; exit 0; }
-                mkdir -p /var/mobile/zzuu_backups
-                case "\(abAction)" in
-                  backup)
-                    TS=$(date +%Y%m%d_%H%M%S)
-                    tar czf "/var/mobile/zzuu_backups/\(abBid)_$TS.tar.gz" -C "$CONT" . 2>/dev/null && ls -lh "/var/mobile/zzuu_backups/\(abBid)_$TS.tar.gz" && echo "BACKUP_OK"
-                    ;;
-                  restore)
-                    LATEST=$(ls -t /var/mobile/zzuu_backups/\(abBid)_*.tar.gz 2>/dev/null | head -1)
-                    [ -z "$LATEST" ] && { echo "NO_BACKUP"; exit 0; }
-                    tar xzf "$LATEST" -C "$CONT" 2>/dev/null && echo "RESTORE_OK from $LATEST"
-                    ;;
-                  list)
-                    ls -lht /var/mobile/zzuu_backups/\(abBid)_*.tar.gz 2>/dev/null || echo "(no backups)"
-                    ;;
-                esac
-                """
-                let r = try await executeRootCommand(script, timeout: 300) { _ in }
-                if r.output.contains("CONTAINER_NOT_FOUND") {
-                    toolOutput = "Error: container for \(abBid) not found."
+            if abAction == "list" {
+                let files = (try? FileManager.default.contentsOfDirectory(atPath: "/var/mobile/zzuu_backups")) ?? []
+                let mine = files.filter { $0.hasPrefix(abBid) }
+                toolOutput = mine.isEmpty ? "(no backups)" : mine.joined(separator: "\n")
+                toolSuccess = true
+            } else {
+                guard let dest = DirectKit.backupContainer(abApp) else {
+                    toolOutput = "Error: backup failed."
                     toolSuccess = false
-                } else if r.output.contains("NO_BACKUP") {
-                    toolOutput = "No backups found for \(abBid)."
-                    toolSuccess = false
-                } else {
-                    toolOutput = r.output
-                    toolSuccess = r.output.contains("BACKUP_OK") || r.output.contains("RESTORE_OK") || abAction == "list"
+                    break
                 }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
+                toolOutput = "BACKUP_OK: \(dest)"
+                toolSuccess = true
             }
             break
         case "resign_ipa":
@@ -752,60 +616,47 @@ extension AIChatViewModel {
             }
             break
         case "macho_info":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let miPath = (toolArgs["path"] as? String) ?? ""
-            guard !miPath.isEmpty else {
-                toolOutput = "Error: Missing required 'path'."
+            let miBid = (toolArgs["bundle_id"] as? String) ?? ""
+            var resolved = miPath
+            if resolved.isEmpty, !miBid.isEmpty,
+               let a = DirectKit.installedApp(for: miBid) {
+                resolved = a.bundlePath + "/" + a.executable
+            }
+            guard !resolved.isEmpty else {
+                toolOutput = "Error: provide 'path' or 'bundle_id'."
                 toolSuccess = false
                 break
             }
-            do {
-                let r = try await executeRootCommand(
-                    "file '\(miPath)'; echo ---; rabin2 -I '\(miPath)' 2>/dev/null | head -20; echo ---; rabin2 -L '\(miPath)' 2>/dev/null | head -20; echo ---; strings '\(miPath)' 2>/dev/null | grep -cE '^_OBJC_CLASS' | head -1",
-                    timeout: 60) { _ in }
-                toolOutput = r.output.isEmpty ? "(no output)" : r.output
-                toolSuccess = true
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            guard let info = DirectKit.machoInfo(binaryPath: resolved) else {
+                toolOutput = "Error: not a valid Mach-O: \(resolved)"
                 toolSuccess = false
+                break
             }
+            toolOutput = "magic: \(info.magic)\narch: \(info.arch)\nload commands: \(info.loadCommandCount)\nplatforms: \(info.platforms.joined(separator: ", "))\nencryption: \(info.encryptions.joined(separator: ", "))"
+            toolSuccess = true
             break
         case "class_dump":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let cdPath = (toolArgs["path"] as? String) ?? ""
+            let cdBid = (toolArgs["bundle_id"] as? String) ?? ""
             let cdFilter = (toolArgs["class_filter"] as? String) ?? ""
-            guard !cdPath.isEmpty else {
-                toolOutput = "Error: Missing required 'path'."
+            var binPath = cdPath
+            if binPath.isEmpty, !cdBid.isEmpty,
+               let a = DirectKit.installedApp(for: cdBid) {
+                binPath = a.bundlePath + "/" + a.executable
+            }
+            guard !binPath.isEmpty else {
+                toolOutput = "Error: provide 'path' or 'bundle_id'."
                 toolSuccess = false
                 break
             }
-            do {
-                let cmd = """
-                which class-dump >/dev/null 2>&1 && echo HAVE_CD || { apk add --no-cache clang make git >/dev/null 2>&1; echo COMPILE_NEEDED; }
-                """
-                let cd = try await executeRootCommand(cmd, timeout: 60) { _ in }
-                if cd.output.contains("COMPILE_NEEDED") {
-                    toolOutput = "class-dump not installed. Run the re-objc-api skill bootstrap first (compiles class-dump in the sandbox), or use rabin2 -s for symbol-level triage."
-                    toolSuccess = false
-                    break
-                }
-                let filterCmd = cdFilter.isEmpty ? "" : " | grep -A20 '@interface.*\(cdFilter)'"
-                let r = try await executeRootCommand(
-                    "class-dump '\(cdPath)' 2>/dev/null\(filterCmd) | head -200",
-                    timeout: 120) { _ in }
-                toolOutput = r.output.isEmpty ? "(no classes found)" : r.output
-                toolSuccess = true
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            let names = DirectKit.objcClassNames(binaryPath: binPath, filter: cdFilter, limit: 300)
+            if names.isEmpty {
+                toolOutput = "(no ObjC class names found - Swift-only or stripped binary)"
                 toolSuccess = false
+            } else {
+                toolOutput = names.joined(separator: "\n")
+                toolSuccess = true
             }
             break
         case "theos_build":
@@ -838,97 +689,57 @@ extension AIChatViewModel {
             }
             break
         case "screen_control":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
             let scAction = (toolArgs["action"] as? String) ?? ""
             guard !scAction.isEmpty else {
-                toolOutput = "Error: Missing required 'action' (tap/double_tap/long_press/swipe/pinch/home/type_text)."
+                toolOutput = "Error: Missing 'action'."
                 toolSuccess = false
                 break
             }
-            do {
-                // Marshal args to JSON and run the on-device inject daemon.
-                let scPayload: [String: Any] = [
-                    "action": scAction,
-                    "x": (toolArgs["x"] as? NSNumber) ?? 0,
-                    "y": (toolArgs["y"] as? NSNumber) ?? 0,
-                    "x2": (toolArgs["x2"] as? NSNumber) ?? 0,
-                    "y2": (toolArgs["y2"] as? NSNumber) ?? 0,
-                    "duration": (toolArgs["duration"] as? NSNumber) ?? 0,
-                    "scale": (toolArgs["scale"] as? NSNumber) ?? 1.5,
-                    "text": (toolArgs["text"] as? String) ?? "",
-                ]
-                let scData = try JSONSerialization.data(withJSONObject: scPayload)
-                let scJSON = String(data: scData, encoding: .utf8) ?? "{}"
-                let scB64 = Data(scJSON.utf8).base64EncodedString()
-                let script = """
-                PAYLOAD='\(scB64)'
-                # Run the injector inside zzuu's process space via its HID bridge.
-                BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "zzuu" -type f 2>/dev/null | head -1)
-                if [ -z "$BIN" ]; then BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*zzuu.app/*" -type f -perm +111 2>/dev/null | head -1); fi
-                if [ -z "$BIN" ]; then echo "ZZUU_BIN_NOT_FOUND"; exit 0; fi
-                # The HID bridge is a small CLI linked against zzuu's frameworks.
-                "$BIN" --zzuu-hid "$PAYLOAD" 2>&1 || echo "HID_RUN_FAILED"
-                """
-                let r = try await executeRootCommand(script, timeout: 120) { _ in }
-                if r.output.contains("ZZUU_BIN_NOT_FOUND") {
-                    toolOutput = "Error: could not locate the zzuu binary on device for HID bridge execution."
-                    toolSuccess = false
-                } else if r.output.contains("HID_RUN_FAILED") {
-                    toolOutput = "Error: HID bridge failed. The host may need the injector daemon installed (see re-ios-triage skill). Raw:\n\(r.output)"
-                    toolSuccess = false
-                } else {
-                    toolOutput = "screen_control(\(scAction)) OK\n\(r.output)"
-                    toolSuccess = true
-                }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
+            let inj = HIDTouchInjector.shared()
+            let scX = (toolArgs["x"] as? NSNumber)?.doubleValue ?? 0
+            let scY = (toolArgs["y"] as? NSNumber)?.doubleValue ?? 0
+            let scX2 = (toolArgs["x2"] as? NSNumber)?.doubleValue ?? 0
+            let scY2 = (toolArgs["y2"] as? NSNumber)?.doubleValue ?? 0
+            let scDur = (toolArgs["duration"] as? NSNumber)?.doubleValue ?? 0
+            let scScale = (toolArgs["scale"] as? NSNumber)?.doubleValue ?? 1.5
+            let scText = (toolArgs["text"] as? String) ?? ""
+            switch scAction {
+            case "tap":        inj.tap(at: CGPoint(x: scX, y: scY))
+            case "double_tap": inj.doubleTap(at: CGPoint(x: scX, y: scY))
+            case "long_press": inj.longPress(at: CGPoint(x: scX, y: scY), duration: scDur)
+            case "swipe":      inj.swipe(from: CGPoint(x: scX, y: scY), to: CGPoint(x: scX2, y: scY2), duration: scDur)
+            case "pinch":      inj.pinch(inBounds: CGRect(x: scX - 80, y: scY - 80, width: 160, height: 160), scale: scScale, angle: 0, duration: scDur)
+            case "home":       inj.pressHomeButton()
+            case "type_text":  inj.typeText(scText)
+            default:
+                toolOutput = "Error: unknown action \(scAction)"
                 toolSuccess = false
+                break
+            }
+            if toolSuccess == nil || toolSuccess == true {
+                toolOutput = "HID_OK \(scAction)"
+                toolSuccess = true
             }
             break
         case "ui_dump":
-            guard JailbreakConfigStore.shared.isConfigured else {
-                toolOutput = "Error: Jailbreak SSH is not configured."
-                toolSuccess = false
-                break
-            }
-            do {
-                let udBid = (toolArgs["bundle_id"] as? String) ?? ""
-                let udDepth = (toolArgs["max_depth"] as? NSNumber)?.intValue ?? 12
-                let udPayload: [String: Any] = ["bundle_id": udBid, "max_depth": udDepth]
-                let udData = try JSONSerialization.data(withJSONObject: udPayload)
-                let udJSON = String(data: udData, encoding: .utf8) ?? "{}"
-                let udB64 = Data(udJSON.utf8).base64EncodedString()
-                let script = """
-                PAYLOAD='\(udB64)'
-                BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "zzuu" -type f 2>/dev/null | head -1)
-                if [ -z "$BIN" ]; then BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*zzuu.app/*" -type f -perm +111 2>/dev/null | head -1); fi
-                if [ -z "$BIN" ]; then echo "ZZUU_BIN_NOT_FOUND"; exit 0; fi
-                "$BIN" --zzuu-uidump "$PAYLOAD" 2>&1 || echo "UIDUMP_FAILED"
-                """
-                let r = try await executeRootCommand(script, timeout: 180) { _ in }
-                if r.output.contains("ZZUU_BIN_NOT_FOUND") {
-                    toolOutput = "Error: could not locate the zzuu binary on device for UI dump bridge execution."
+            let udBid = (toolArgs["bundle_id"] as? String) ?? ""
+            let udDepth = (toolArgs["max_depth"] as? NSNumber)?.intValue ?? 12
+            if udBid.isEmpty || udBid == Bundle.main.bundleIdentifier {
+                guard let json = zzuuDumpUITreeJSON(udDepth) else {
+                    toolOutput = "Error: dump failed."
                     toolSuccess = false
-                } else if r.output.contains("UIDUMP_FAILED") {
-                    toolOutput = "Error: UI dump bridge failed. Raw:\n\(r.output)"
-                    toolSuccess = false
-                } else {
-                    // Trim: keep the JSON payload only
-                    var out = r.output
-                    if let jsonStart = out.range(of: "{\"windows\"") {
-                        out = String(out[jsonStart.lowerBound...])
-                    }
-                    if out.count > 60_000 { out = String(out.prefix(60_000)) + "\n…[truncated]" }
-                    toolOutput = "ui_dump result:\n\(out)"
-                    toolSuccess = true
+                    break
                 }
-            } catch {
-                toolOutput = "Error: \(error.localizedDescription)"
-                toolSuccess = false
+                toolOutput = json.count > 60000 ? String(json.prefix(60000)) + "\n...[truncated]" : json
+                toolSuccess = true
+            } else {
+                guard let target = DirectKit.installedApp(for: udBid) else {
+                    toolOutput = "Error: app \(udBid) not found."
+                    toolSuccess = false
+                    break
+                }
+                toolOutput = "App found: \(target.name) (\(target.bundleID)). To dump ITS UI: dylib_inject with UIDumpInjector dylib, relaunch the app, then read /var/tmp/zzuu_uidump.json."
+                toolSuccess = true
             }
             break
         case "root_execute":

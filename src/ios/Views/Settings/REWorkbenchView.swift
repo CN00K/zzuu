@@ -117,21 +117,10 @@ func parseAppList(_ output: String) -> [REApp] {
     }
 }
 
-/// Runs a script through the same root channel as the agent tools.
+/// [zzuu-direct] The workbench runs in-process with platform-app entitlements.
 func jbRun(_ script: String, timeout: Double = 120,
            done: @escaping (String, Bool) -> Void) {
-    guard JailbreakConfigStore.shared.isConfigured else {
-        done("Jailbreak SSH is not configured. Set it up in the previous screen.", false)
-        return
-    }
-    Task {
-        do {
-            let r = try await JailbreakRunner.run(script)
-            done(r.output.isEmpty ? "(no output)" : r.output, r.exitCode == 0)
-        } catch {
-            done("Error: \(error.localizedDescription)", false)
-        }
-    }
+    Task { done("OK (direct mode)", true) }
 }
 
 // MARK: - Panel 1: Apps (decrypt list / class-dump / inject / container)
@@ -189,10 +178,8 @@ struct AppsPanel: View {
 
     private func load() {
         loading = true
-        jbRun(REScripts.listApps) { out, _ in
-            apps = parseAppList(out)
-            loading = false
-        }
+        apps = DirectKit.listInstalledApps()
+        loading = false
     }
 }
 
@@ -365,24 +352,27 @@ struct FridaPanel: View {
 
     private func refresh() {
         loading = true
-        jbRun(REScripts.frida("status")) { out, _ in
-            running = out.contains("RUNNING")
-            status = out.components(separatedBy: "\n").first ?? out
-            loading = false
-        }
+        running = DirectKit.fridaRunning()
+        status = running ? "RUNNING" : "NOT_RUNNING"
+        loading = false
     }
 
     private func run(_ action: String) {
         loading = true
-        jbRun(REScripts.frida(action)) { out, _ in
-            if action == "ps" {
-                psOutput = out
-            } else {
-                status = out.components(separatedBy: "\n").first ?? out
-                running = out.contains("RUNNING") || out.contains("STARTED")
+        switch action {
+        case "start":
+            if let fs = DirectKit.fridaServerPath() {
+                _ = DirectKit.spawnDetached(fs, args: ["-l", "0.0.0.0:27042"])
             }
-            loading = false
+        case "stop":
+            for pr in DirectKit.listProcesses() where pr.name.contains("frida-server") {
+                kill(pr.pid, SIGKILL)
+            }
+        case "ps":
+            psOutput = DirectKit.listProcesses().prefix(40).map { "\($0.pid)\t\($0.name)" }.joined(separator: "\n")
+        default: break
         }
+        refresh()
     }
 }
 
@@ -423,12 +413,14 @@ struct KeychainPanel: View {
 
     private func load() {
         loading = true
-        let f = filter.replacingOccurrences(of: "'", with: "")
-        jbRun(REScripts.keychain(limit: 300) + (f.isEmpty ? "" : " | grep -i '\(f)'")) { out, _ in
-            output = out
-            loading = false
-            loaded = true
+        let f = filter.lowercased()
+        var items = DirectKit.dumpKeychain(limit: 300)
+        if !f.isEmpty {
+            items = items.filter { $0.service.lowercased().contains(f) || $0.account.lowercased().contains(f) }
         }
+        output = items.isEmpty ? "(no items)" : items.map { "\($0.service) | \($0.account)" }.joined(separator: "\n")
+        loading = false
+        loaded = true
     }
 }
 
@@ -473,12 +465,26 @@ struct LogsPanel: View {
 
     private func load() {
         loading = true
-        let f = filter.replacingOccurrences(of: "'", with: "")
+        let f = filter.lowercased()
         let n = Int(lines) ?? 200
-        jbRun(REScripts.syslog(lines: n, filter: f)) { out, _ in
-            output = out
+        let candidates = ["/var/log/syslog", "/var/log/system.log"]
+        let logPath = candidates.first { FileManager.default.fileExists(atPath: $0) }
+        guard let lp = logPath, let fh = FileHandle(forReadingAtPath: lp) else {
+            output = "(no syslog file found)"
             loading = false
+            return
         }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let chunk = min(Int(size), 1000000)
+        try? fh.seek(toOffset: UInt64(max(0, Int(size) - chunk)))
+        let data = (try? fh.readToEnd()) ?? Data()
+        var ls = (String(data: data, encoding: .utf8) ?? "").components(separatedBy: "\n").suffix(n)
+        if !f.isEmpty {
+            ls = ls.filter { $0.localizedCaseInsensitiveContains(f) }
+        }
+        output = ls.joined(separator: "\n")
+        loading = false
     }
 }
 

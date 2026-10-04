@@ -297,78 +297,41 @@ struct ScreenControlPanel: View {
         }
     }
 
-    private func findZZUUBinary() -> String {
-        """
-        BIN=$(find /var/containers/Bundle/Application -maxdepth 4 -name "Minis" -type f 2>/dev/null | head -1)
-        if [ -z "$BIN" ]; then
-          BIN=$(find /var/containers/Bundle/Application -maxdepth 5 -path "*.app/Minis" -type f -perm +111 2>/dev/null | head -1)
-        fi
-        [ -z "$BIN" ] && { echo "ZZUU_BIN_NOT_FOUND"; exit 0; }
-        echo "$BIN"
-        """
-    }
+
 
     private func runHID(_ action: String) {
         busy = true
         result = nil
-        Task {
-            do {
-                let payload: [String: Any] = [
-                    "action": action,
-                    "x": Double(xText) ?? 0,
-                    "y": Double(yText) ?? 0,
-                    "x2": Double(x2Text) ?? 0,
-                    "y2": Double(y2Text) ?? 0,
-                    "duration": Double(durText) ?? 0.3,
-                    "scale": 1.5,
-                    "text": "",
-                ]
-                let data = try JSONSerialization.data(withJSONObject: payload)
-                let b64 = data.base64EncodedString()
-                let script = """
-                BIN=$(\(findZZUUBinary()))
-                case "$BIN" in *NOT_FOUND*) echo "ZZUU_BIN_NOT_FOUND"; exit 0;; esac
-                "$BIN" --zzuu-hid '\(b64)' 2>&1 || echo "HID_RUN_FAILED"
-                """
-                let r = try await JailbreakRunner.run(script)
-                result = r.output.isEmpty ? "(no output)" : r.output
-                showResult = true
-            } catch {
-                result = "Error: \(error.localizedDescription)"
-                showResult = true
-            }
-            busy = false
+        let x = Double(xText) ?? 0
+        let y = Double(yText) ?? 0
+        let x2 = Double(x2Text) ?? 0
+        let y2 = Double(y2Text) ?? 0
+        let dur = Double(durText) ?? 0.3
+        let inj = HIDTouchInjector.shared()
+        switch action {
+        case "tap":        inj.tap(at: CGPoint(x: x, y: y))
+        case "double_tap": inj.doubleTap(at: CGPoint(x: x, y: y))
+        case "long_press": inj.longPress(at: CGPoint(x: x, y: y), duration: dur)
+        case "swipe":      inj.swipe(from: CGPoint(x: x, y: y), to: CGPoint(x: x2, y: y2), duration: dur)
+        case "pinch":      inj.pinch(inBounds: CGRect(x: x - 80, y: y - 80, width: 160, height: 160), scale: 1.5, angle: 0, duration: dur)
+        case "home":       inj.pressHomeButton()
+        default: break
         }
+        result = "HID_OK " + action
+        showResult = true
+        busy = false
     }
 
     private func runDump() {
         busy = true
         result = nil
-        Task {
-            do {
-                let payload: [String: Any] = [
-                    "bundle_id": bundleID,
-                    "max_depth": 12,
-                ]
-                let data = try JSONSerialization.data(withJSONObject: payload)
-                let b64 = data.base64EncodedString()
-                let script = """
-                BIN=$(\(findZZUUBinary()))
-                case "$BIN" in *NOT_FOUND*) echo "ZZUU_BIN_NOT_FOUND"; exit 0;; esac
-                "$BIN" --zzuu-uidump '\(b64)' 2>&1 | head -c 60000 || echo "UIDUMP_FAILED"
-                """
-                let r = try await JailbreakRunner.run(script)
-                var out = r.output
-                if let jsonStart = out.range(of: "{\"windows\"") {
-                    out = String(out[jsonStart.lowerBound...])
-                }
-                result = out.count > 60000 ? String(out.prefix(60000)) + "\n…[truncated]" : out
-                showResult = true
-            } catch {
-                result = "Error: \(error.localizedDescription)"
-                showResult = true
-            }
-            busy = false
+        if bundleID.isEmpty || bundleID == Bundle.main.bundleIdentifier {
+            let json = zzuuDumpUITreeJSON(12)
+            result = json ?? "UIDUMP_FAILED"
+        } else {
+            result = "Target dump: dylib_inject UIDumpInjector first, then read /var/tmp/zzuu_uidump.json."
         }
+        showResult = true
+        busy = false
     }
 }
